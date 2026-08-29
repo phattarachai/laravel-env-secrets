@@ -59,7 +59,10 @@ it('derives the slug from the app name when config slug is null', function () {
     $this->artisan('secrets:provision', ['env' => 'secretstest'])->assertSuccessful();
 
     Process::assertRan(function (PendingProcess $process) {
-        return str_contains(((array) $process->command)[2], 'my-cool-app.secretstest.key');
+        $command = (array) $process->command;
+
+        return ($command[0] ?? null) === 'ssh'
+            && str_contains($command[2] ?? '', 'my-cool-app.secretstest.key');
     });
 });
 
