@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Process\PendingProcess;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Process;
 
 afterEach(function () {
@@ -94,4 +95,34 @@ it('rejects an env name that is not a slug', function () {
         ->assertFailed();
 
     Process::assertNothingRan();
+});
+
+it('never prints the encryption key to the console', function () {
+    Process::fake();
+    file_put_contents(base_path('.env.secretstest'), "APP_ENV=secretstest\n");
+
+    $exitCode = Artisan::call('secrets:provision', [
+        'env' => 'secretstest',
+        '--host' => 'necta-test',
+        '--slug' => 'app',
+    ]);
+
+    expect($exitCode)->toBe(0);
+
+    // The ssh stdin is the only place the key legitimately exists, so read it back from
+    // there — the assertion then names the real value rather than a pattern that could drift.
+    $key = null;
+
+    Process::assertRan(function (PendingProcess $process) use (&$key): bool {
+        if (((array) $process->command)[0] !== 'ssh') {
+            return false;
+        }
+
+        $key = (string) $process->input;
+
+        return true;
+    });
+
+    expect($key)->toMatch('/^[0-9a-f]{32}$/')
+        ->and(Artisan::output())->not->toContain($key);
 });

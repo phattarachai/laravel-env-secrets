@@ -129,7 +129,9 @@ password manager (it is already on your clipboard).
 ## Security notes
 
 - The key is minted with `random_bytes` (CSPRNG) and passed to `env:encrypt` via `--key`, so `env:encrypt`
-  never generates or prints its own key.
+  never generates a key of its own. It *does* echo back the key it was handed — its last line is
+  `twoColumnDetail('Key', ...)` — so it is invoked with `callSilently()` and the console only ever sees
+  this command's own summary.
 - The key is streamed to the server over **ssh stdin** and to the clipboard over **pbcopy stdin** — never
   as a shell argument, so it stays out of `ps`, shell history, and CI logs.
 - On the box the key file is created `600`, owned by the connecting ssh user, in a `700` directory.

@@ -117,11 +117,14 @@ class SecretsProvisionCommand extends Command
     /**
      * Encrypt .env.<env> with the given key via the framework's env:encrypt.
      *
-     * Passing --key keeps env:encrypt from printing the generated key to stdout.
+     * Silently: env:encrypt ends with twoColumnDetail('Key', ...), which echoes back the very
+     * key we passed it, so calling it normally would print the secret to the console and leave
+     * it in the terminal scrollback and any CI log. callSilently() hands it a NullOutput; this
+     * command prints its own summary instead.
      */
     private function encrypt(string $env, string $key): int
     {
-        return $this->call('env:encrypt', [
+        return $this->callSilently('env:encrypt', [
             '--env' => $env,
             '--key' => $key,
             '--force' => true,
