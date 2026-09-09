@@ -20,4 +20,12 @@ return [
      * to the application directory name. Overridable per run with --slug.
      */
     'slug' => env('ENV_SECRETS_SLUG', null),
+
+    /*
+     * Absolute path to the deployed application directory on the box. Used by
+     * `secrets:status --remote` and `secrets:show --remote` to read the live
+     * .env that is actually running there. Leave null to disable remote reads;
+     * override per run with --path.
+     */
+    'app_path' => env('ENV_SECRETS_APP_PATH', null),
 ];

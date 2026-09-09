@@ -7,10 +7,20 @@
 ![Laravel Version](https://img.shields.io/badge/laravel-11%20%7C%2012%20%7C%2013-FF2D20?style=flat-square&logo=laravel&logoColor=white)
 [![Total Downloads](https://img.shields.io/packagist/dt/phattarachai/laravel-env-secrets.svg?style=flat-square)](https://packagist.org/packages/phattarachai/laravel-env-secrets)
 
-One artisan command — `secrets:provision` — to run the encrypted-`.env` deploy pattern end to end:
-mint an encryption key, encrypt `.env.<env>` with Laravel's own `env:encrypt`, and install the key on
-your deploy box over ssh. The key is generated with a CSPRNG and **never** touches stdout, your shell
-history, or a process argument — it reaches the server over ssh stdin and your clipboard via `pbcopy`.
+A small suite of artisan commands to run the encrypted-`.env` deploy pattern end to end: mint an
+encryption key, encrypt `.env.<env>` with Laravel's own `env:encrypt`, install the key on your deploy
+box over ssh — and then **edit, re-encrypt, health-check, and inspect** those files later without the key
+ever drifting. The key is generated with a CSPRNG, kept only on the box, and **never** touches stdout,
+your shell history, or a process argument — it reaches the server over ssh stdin and your clipboard via
+`pbcopy`, and every later command fetches it back over ssh into memory only.
+
+| Command | Purpose |
+|---|---|
+| `secrets:provision <env>` | First-time: mint a key, encrypt `.env.<env>`, install the key on the box. |
+| `secrets:edit <env>` | Fetch the box key and decrypt `.env.<env>` for editing. |
+| `secrets:reencrypt <env>` | Re-encrypt an edited `.env.<env>` with the **same** box key + verify the round-trip. |
+| `secrets:status <env>` | Is it provisioned and does the box key decrypt it? (`--remote` checks the live `.env`.) |
+| `secrets:show <env> [name]` | Inspect values without writing plaintext — masked names, or one named value. |
 
 ## Why
 
@@ -57,9 +67,10 @@ php artisan vendor:publish --tag=env-secrets-config
 ```php
 // config/env-secrets.php
 return [
-    'host' => env('ENV_SECRETS_HOST', 'necta'),          // ssh host alias of the deploy box
-    'dir'  => env('ENV_SECRETS_DIR', '/etc/nectapharma'), // where key files live on the box
-    'slug' => env('ENV_SECRETS_SLUG', null),              // key filename stem; null → app name
+    'host'     => env('ENV_SECRETS_HOST', 'necta'),          // ssh host alias of the deploy box
+    'dir'      => env('ENV_SECRETS_DIR', '/etc/nectapharma'), // where key files live on the box
+    'slug'     => env('ENV_SECRETS_SLUG', null),              // key filename stem; null → app name
+    'app_path' => env('ENV_SECRETS_APP_PATH', null),          // deployed app dir on the box, for --remote
 ];
 ```
 
@@ -125,6 +136,43 @@ password manager (it is already on your clipboard).
 | `--dir`   | `config('env-secrets.dir')`          | Directory on the box that holds the key files.      |
 | `--slug`  | config, else app name                | Filename stem — key is `<slug>.<env>.key`.          |
 | `--local` | off                                  | Encrypt locally only; skip installing on the box.   |
+
+## Editing an env later
+
+Once an env is provisioned, the key already lives on the box — so editing it is a two-step loop that
+**reuses that key** instead of minting a new one:
+
+```bash
+php artisan secrets:edit production          # fetch key from box → writes plaintext .env.production
+# ...edit .env.production...
+php artisan secrets:reencrypt production --prune   # re-encrypt with the SAME key, verify, remove plaintext
+```
+
+`secrets:reencrypt` decrypts the fresh ciphertext in memory and asserts it matches your plaintext before
+you commit, so a bad encrypt can never reach the repo. `--prune` deletes the plaintext after a verified
+run. Then commit `.env.production.encrypted`.
+
+> **Never re-run `php artisan env:encrypt` by hand to update an already-provisioned env.** That command
+> reads the key **only** from `--key` — it ignores `LARAVEL_ENV_ENCRYPTION_KEY` — and, run
+> non-interactively, silently mints a throwaway random key. The result is ciphertext your box can no
+> longer decrypt ("The MAC is invalid" at deploy). `secrets:reencrypt` exists precisely to prevent this:
+> it always feeds `env:encrypt` the real box key.
+
+## Inspecting an env
+
+```bash
+php artisan secrets:status production            # provisioned? does the box key decrypt the committed file?
+php artisan secrets:show production              # list variable NAMES with masked values (no plaintext on disk)
+php artisan secrets:show production DB_PASSWORD   # print ONE value (explicit per-value opt-in)
+```
+
+Both take `--remote` to read the **live deployed `.env`** on the server instead of the committed
+ciphertext — the source of truth for what the app is actually running. Set `app_path` (or `--path`) first:
+
+```bash
+php artisan secrets:show production DB_HOST --remote
+php artisan secrets:status production --remote
+```
 
 ## Security notes
 

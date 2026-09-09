@@ -2,9 +2,7 @@
 
 namespace Phattarachai\EnvSecrets\Commands;
 
-use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Process;
-use Illuminate\Support\Str;
 
 /**
  * One-shot provisioning for the env:encrypt secret pattern:
@@ -19,8 +17,11 @@ use Illuminate\Support\Str;
  *
  * Host, dir, and slug default from config/env-secrets.php; each is overridable per run with an
  * explicit --host / --dir / --slug option.
+ *
+ * Once provisioned, edit the file later with `secrets:edit` + `secrets:reencrypt`, which reuse the
+ * installed key instead of minting a new one.
  */
-class SecretsProvisionCommand extends Command
+class SecretsProvisionCommand extends SecretsCommand
 {
     protected $signature = 'secrets:provision
         {env : Environment to encrypt and provision a key for (e.g. uat, production)}
@@ -34,13 +35,8 @@ class SecretsProvisionCommand extends Command
     public function handle(): int
     {
         $env = (string) $this->argument('env');
-        $host = $this->resolveHost();
-        $slug = $this->resolveSlug();
-        $dir = rtrim($this->resolveDir(), '/');
 
-        if (! $this->isSlug($env) || ! $this->isSlug($slug) || ! $this->isPath($dir)) {
-            $this->error('env and slug must be [a-z0-9-]; dir must be an absolute path.');
-
+        if (! $this->validEnv($env)) {
             return self::FAILURE;
         }
 
@@ -62,73 +58,24 @@ class SecretsProvisionCommand extends Command
 
         $this->info(".env.{$env} encrypted → .env.{$env}.encrypted");
 
+        if (! $this->option('local') && ! $this->install($key, $this->resolveHost(), $this->keyPath($env))) {
+            return self::FAILURE;
+        }
+
         if (! $this->option('local')) {
-            $path = "{$dir}/{$slug}.{$env}.key";
-
-            if (! $this->install($key, $host, $path)) {
-                return self::FAILURE;
-            }
-
-            $this->info("Key installed at {$host}:{$path}");
+            $this->info("Key installed at {$this->resolveHost()}:{$this->keyPath($env)}");
         }
 
         $clipped = $this->toClipboard($key);
+        $slug = $this->resolveSlug();
 
         $this->newLine();
         $this->line($clipped
             ? "→ Key copied to clipboard. Paste it into your password manager (item: {$slug} · {$env})."
-            : "→ Store the key in your password manager (item: {$slug} · {$env}). Retrieve it from {$host} if needed.");
+            : "→ Store the key in your password manager (item: {$slug} · {$env}). Retrieve it from {$this->resolveHost()} if needed.");
         $this->line("→ Commit .env.{$env}.encrypted.");
 
         return self::SUCCESS;
-    }
-
-    /**
-     * Explicit --host, else config('env-secrets.host'), else a sensible fallback.
-     */
-    private function resolveHost(): string
-    {
-        return (string) ($this->option('host') ?: config('env-secrets.host') ?: 'necta');
-    }
-
-    /**
-     * Explicit --dir, else config('env-secrets.dir'), else a sensible fallback.
-     */
-    private function resolveDir(): string
-    {
-        return (string) ($this->option('dir') ?: config('env-secrets.dir') ?: '/etc/secrets');
-    }
-
-    /**
-     * Explicit --slug, else config('env-secrets.slug'), else a slug of the app
-     * name, else the application directory name.
-     */
-    private function resolveSlug(): string
-    {
-        $slug = $this->option('slug') ?: config('env-secrets.slug');
-
-        if (! $slug) {
-            $slug = Str::slug((string) config('app.name')) ?: basename(base_path());
-        }
-
-        return (string) $slug;
-    }
-
-    /**
-     * Encrypt .env.<env> with the given key via the framework's env:encrypt.
-     *
-     * Silently: env:encrypt ends with twoColumnDetail('Key', ...), which echoes back the very
-     * key we passed it, so calling it normally would print the secret to the console and leave
-     * it in the terminal scrollback and any CI log. callSilently() hands it a NullOutput; this
-     * command prints its own summary instead.
-     */
-    private function encrypt(string $env, string $key): int
-    {
-        return $this->callSilently('env:encrypt', [
-            '--env' => $env,
-            '--key' => $key,
-            '--force' => true,
-        ]);
     }
 
     /**
@@ -166,15 +113,5 @@ class SecretsProvisionCommand extends Command
         } catch (\Throwable) {
             return false;
         }
-    }
-
-    private function isSlug(string $value): bool
-    {
-        return (bool) preg_match('/^[a-z0-9-]+$/', $value);
-    }
-
-    private function isPath(string $value): bool
-    {
-        return (bool) preg_match('#^/[A-Za-z0-9._/-]*$#', $value);
     }
 }
