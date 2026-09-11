@@ -13,7 +13,11 @@ jobs:
   update_release_draft:
     permissions:
       contents: write
-      pull-requests: read
+      # write, not read: the autolabeler APPLIES labels to the PR, and without write it
+      # silently applies none. That matters because version-resolver reads those labels —
+      # an unlabelled `feat:` PR resolves to the `default: patch` bump, so the draft comes
+      # out a patch release when it should be a minor one.
+      pull-requests: write
     runs-on: ubuntu-latest
     steps:
       - uses: release-drafter/release-drafter@v7
