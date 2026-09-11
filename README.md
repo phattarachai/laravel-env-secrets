@@ -70,11 +70,12 @@ return [
     'host'     => env('ENV_SECRETS_HOST', 'necta'),          // ssh host alias of the deploy box
     'dir'      => env('ENV_SECRETS_DIR', '/etc/nectapharma'), // where key files live on the box
     'slug'     => env('ENV_SECRETS_SLUG', null),              // key filename stem; null → app name
+    'group'    => env('ENV_SECRETS_GROUP', null),             // unix group that may read the key; null → owner only
     'app_path' => env('ENV_SECRETS_APP_PATH', null),          // deployed app dir on the box, for --remote
 ];
 ```
 
-Every value is overridable per run with `--host`, `--dir`, `--slug`. When an option is omitted the command
+Every value is overridable per run with `--host`, `--dir`, `--slug`, `--group`. When an option is omitted the command
 uses the config value; when the config `slug` is `null` it derives one from `config('app.name')` (falling
 back to the application directory name).
 
@@ -135,7 +136,32 @@ password manager (it is already on your clipboard).
 | `--host`  | `config('env-secrets.host')`         | ssh host alias of the box that stores the key.      |
 | `--dir`   | `config('env-secrets.dir')`          | Directory on the box that holds the key files.      |
 | `--slug`  | config, else app name                | Filename stem — key is `<slug>.<env>.key`.          |
+| `--group` | `config('env-secrets.group')`        | Unix group allowed to read the key — see below.     |
 | `--local` | off                                  | Encrypt locally only; skip installing on the box.   |
+
+### Sharing a key with a team
+
+By default the key lands `600`, owned by the user you ssh in as — so exactly **one person** can run
+`secrets:edit` against that box. Everyone else gets
+`Could not read the key at <host>:<path> — run \`secrets:provision\` first?`, which reads like a missing
+key and is really a permission denial. The key is fetched with a plain `ssh <host> cat`; there is no
+sudo fallback, deliberately.
+
+To let a team share it, name a unix group. The directory becomes `750` and the key `640`, owned by
+`<your user>:<group>`:
+
+```bash
+# once, on the box
+sudo groupadd -f deployers && sudo usermod -aG deployers alice
+
+php artisan secrets:provision production --group=deployers
+```
+
+Prefer setting `group` in the config over fixing the permissions by hand: **a key rotation re-runs the
+install step**, and only a configured group survives it — a hand-applied `chgrp` is silently reverted to
+owner-only the next time anyone rotates, locking the team out again with that same misleading error.
+
+Group membership applies to *new* logins; an open ssh session keeps the groups it started with.
 
 ## Editing an env later
 
