@@ -68,6 +68,26 @@ abstract class SecretsCommand extends Command
     }
 
     /**
+     * Explicit --group, else config('env-secrets.group'), else null (key stays owned by
+     * the ssh user alone). A group is what lets more than one teammate run these commands:
+     * the key is fetched with a plain `ssh <host> cat`, never sudo.
+     */
+    protected function resolveGroup(): ?string
+    {
+        $group = $this->hasOption('group') ? $this->option('group') : null;
+
+        return ($group ?: config('env-secrets.group')) ?: null;
+    }
+
+    /**
+     * A unix group name: [a-z_][a-z0-9_-]*, at most 32 chars.
+     */
+    protected function isGroup(string $group): bool
+    {
+        return (bool) preg_match('/^[a-z_][a-z0-9_-]{0,31}$/', $group);
+    }
+
+    /**
      * env / slug must be [a-z0-9-]; dir must be an absolute path. Prints the reason and returns false.
      */
     protected function validEnv(string $env): bool

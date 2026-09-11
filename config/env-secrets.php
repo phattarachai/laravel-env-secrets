@@ -22,6 +22,16 @@ return [
     'slug' => env('ENV_SECRETS_SLUG', null),
 
     /*
+     * Unix group granted read access to the key file, so more than one teammate
+     * can run secrets:edit / reencrypt / status against the box. Leave null and
+     * the key stays 600 owned by the ssh user — i.e. exactly one person can use
+     * these commands. Set it here rather than fixing permissions by hand: a key
+     * rotation re-runs the install step, and only a configured group survives it.
+     * Overridable per run with --group.
+     */
+    'group' => env('ENV_SECRETS_GROUP', null),
+
+    /*
      * Absolute path to the deployed application directory on the box. Used by
      * `secrets:status --remote` and `secrets:show --remote` to read the live
      * .env that is actually running there. Leave null to disable remote reads;

@@ -126,3 +126,74 @@ it('never prints the encryption key to the console', function () {
     expect($key)->toMatch('/^[0-9a-f]{32}$/')
         ->and(Artisan::output())->not->toContain($key);
 });
+
+it('installs the key owner-only when no group is configured', function () {
+    Process::fake();
+    file_put_contents(base_path('.env.secretstest'), "APP_ENV=secretstest\n");
+
+    $this->artisan('secrets:provision', [
+        'env' => 'secretstest',
+        '--host' => 'necta-test',
+        '--slug' => 'app',
+    ])->assertSuccessful();
+
+    Process::assertRan(function (PendingProcess $process) {
+        $remote = ((array) $process->command)[2] ?? '';
+
+        return str_contains($remote, 'chmod 600')
+            && str_contains($remote, '-m 700')
+            && ! str_contains($remote, 'getent group');
+    });
+});
+
+it('installs the key group-readable when --group is passed', function () {
+    Process::fake();
+    file_put_contents(base_path('.env.secretstest'), "APP_ENV=secretstest\n");
+
+    $this->artisan('secrets:provision', [
+        'env' => 'secretstest',
+        '--host' => 'necta-test',
+        '--slug' => 'app',
+        '--group' => 'rr-secrets',
+    ])->assertSuccessful();
+
+    Process::assertRan(function (PendingProcess $process) {
+        $remote = ((array) $process->command)[2] ?? '';
+
+        // 750 on the directory matters as much as 640 on the key: without the
+        // group execute bit the group cannot traverse into the directory at all.
+        return str_contains($remote, "-m 750 -o \"\$u\" -g 'rr-secrets'")
+            && str_contains($remote, 'chmod 640')
+            && str_contains($remote, 'getent group');
+    });
+});
+
+it('falls back to the configured group when --group is not passed', function () {
+    Process::fake();
+    config()->set('env-secrets.group', 'configured-group');
+    file_put_contents(base_path('.env.secretstest'), "APP_ENV=secretstest\n");
+
+    $this->artisan('secrets:provision', [
+        'env' => 'secretstest',
+        '--host' => 'necta-test',
+        '--slug' => 'app',
+    ])->assertSuccessful();
+
+    Process::assertRan(fn (PendingProcess $process) => str_contains(((array) $process->command)[2] ?? '', "'configured-group'"));
+});
+
+it('rejects a group name that is not a valid unix group', function () {
+    Process::fake();
+    file_put_contents(base_path('.env.secretstest'), "APP_ENV=secretstest\n");
+
+    $this->artisan('secrets:provision', [
+        'env' => 'secretstest',
+        '--host' => 'necta-test',
+        '--slug' => 'app',
+        '--group' => 'bad group; rm -rf /',
+    ])->assertFailed();
+
+    // Nothing may be encrypted or shipped once the group is rejected.
+    expect(file_exists(base_path('.env.secretstest.encrypted')))->toBeFalse();
+    Process::assertNothingRan();
+});
