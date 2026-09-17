@@ -21,6 +21,7 @@ your shell history, or a process argument — it reaches the server over ssh std
 | `secrets:reencrypt <env>` | Re-encrypt an edited `.env.<env>` with the **same** box key + verify the round-trip. |
 | `secrets:status <env>` | Is it provisioned and does the box key decrypt it? (`--remote` checks the live `.env`.) |
 | `secrets:show <env> [name]` | Inspect values without writing plaintext — masked names, or one named value. |
+| `secrets:merge <env>` | Append secrets a local `.env` is **missing** — never overwrites, never carries protected keys. |
 
 ## Why
 
@@ -199,6 +200,54 @@ ciphertext — the source of truth for what the app is actually running. Set `ap
 php artisan secrets:show production DB_HOST --remote
 php artisan secrets:status production --remote
 ```
+
+## Topping up a teammate's `.env`
+
+A developer pulls a commit that adds a new secret. Their `.env`, written months ago, has no such key, and
+nothing in the repo can tell them which one is missing — the value only exists inside the ciphertext.
+`secrets:merge` closes that gap, so `git pull` is enough:
+
+```bash
+php artisan secrets:merge local            # append what .env is missing, from .env.local.encrypted
+php artisan secrets:merge local --dry-run   # report the decisions, write nothing
+```
+
+```
+add       OPENROUTER_API_KEY               sk********
+skip      APP_KEY                          (protected — never merged)
+same      MAIL_MAILER                      (already set)
+differs   RESEND_KEY                       (already set, differs — left alone)
+```
+
+Three rules make it safe to run unattended, which is the point — it is meant to live in whatever script
+your team runs after a pull:
+
+1. **A key already in the target is skipped, whatever its value.** A local override is never clobbered
+   silently. A value that differs is reported as *differing* and nothing more — never what it differs to.
+2. **Protected keys are never written**, not even with `--replace --force`. Configure them in
+   `config/env-secrets.php`; the defaults cover `APP_KEY`, `APP_ENV`, `DB_*`, `REDIS_*` and `*_DRIVER`, so
+   pointing a merge at a deploy env cannot push production credentials onto a laptop.
+3. **An appended line is written verbatim** — the exact source line, comments and quoting intact. The file
+   is rewritten through a temp sibling and one `rename()`, after a copy to `<target>.backup`, so a `.env`
+   is never left half-written.
+
+Values only ever appear masked, so this is safe to run in a script whose output someone might paste.
+
+### Options
+
+| Option | Effect |
+|---|---|
+| `--into=` | The file to merge into (default `.env`), relative to the project root unless absolute. |
+| `--dry-run` | Report `add` / `same` / `differs` / `skip` and write nothing. |
+| `--replace` | Overwrite keys that already exist. Asks first — add `--force` for a non-interactive run. |
+| `--replace=A,B` | Overwrite only these keys. No confirmation; you already named them. |
+| `--host=` `--dir=` `--slug=` | As elsewhere — where the decryption key lives. |
+
+> [!NOTE]
+> `secrets:merge` reads the key off the box over ssh like every other command here, so it fails for anyone
+> offline or without access. Treat it as advisory in an automated script: report the failure and carry on
+> rather than failing the whole sync.
+
 
 ## Security notes
 

@@ -151,7 +151,7 @@ abstract class SecretsCommand extends Command
      */
     protected function decryptInMemory(string $env, string $key): ?string
     {
-        $file = base_path(".env.{$env}.encrypted");
+        $file = $this->encryptedPath($env);
 
         if (! file_exists($file)) {
             return null;
@@ -229,5 +229,87 @@ abstract class SecretsCommand extends Command
     protected function isPath(string $value): bool
     {
         return (bool) preg_match('#^/[A-Za-z0-9._/-]*$#', $value);
+    }
+
+    protected function envPath(string $env): string
+    {
+        return base_path(".env.{$env}");
+    }
+
+    protected function encryptedPath(string $env): string
+    {
+        return base_path(".env.{$env}.encrypted");
+    }
+
+    /**
+     * Read an env file into key => the ORIGINAL line, verbatim.
+     *
+     * parseEnv() is the wrong tool for anything that writes: it trims values and throws the source
+     * line away, so a value round-tripped through it loses its quoting and inline comments. This
+     * keeps the raw line so it can be appended byte-for-byte. Last assignment wins, matching what a
+     * dotenv reader ends up with.
+     *
+     * @return array<string, string>
+     */
+    protected function readEnvLines(string $contents): array
+    {
+        $lines = [];
+
+        foreach (preg_split('/\r\n|\r|\n/', $contents) ?: [] as $line) {
+            $name = $this->nameOf($line);
+
+            if ($name !== null) {
+                $lines[$name] = $line;
+            }
+        }
+
+        return $lines;
+    }
+
+    /**
+     * The variable a raw line assigns, or null when the line is blank, a comment, or not an
+     * assignment. `export FOO=1` counts, `FOO` alone does not.
+     */
+    protected function nameOf(string $line): ?string
+    {
+        return preg_match('/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/', $line, $m) === 1 ? $m[1] : null;
+    }
+
+    /**
+     * The value a raw line assigns, unquoted — used only to compare two lines, never to write one.
+     * Quoted values keep their inner `#`; bare values stop at an inline comment, as dotenv does.
+     */
+    protected function valueOf(string $line): string
+    {
+        if (preg_match('/^\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=\s*(.*)$/', $line, $m) !== 1) {
+            return '';
+        }
+
+        $value = rtrim($m[1]);
+
+        if (preg_match('/^"((?:[^"\\\\]|\\\\.)*)"/', $value, $q) === 1) {
+            return stripcslashes($q[1]);
+        }
+
+        if (preg_match("/^'([^']*)'/", $value, $q) === 1) {
+            return $q[1];
+        }
+
+        return trim((string) preg_split('/\s+#/', $value, 2)[0]);
+    }
+
+    /**
+     * Enough of a value to recognise it, never enough to use it. Every command that prints a value
+     * in bulk goes through this, so a secret cannot reach the scrollback or a CI log.
+     */
+    protected function mask(string $value): string
+    {
+        $length = strlen($value);
+
+        return match (true) {
+            $length === 0 => '(empty)',
+            $length <= 4 => str_repeat('*', $length),
+            default => substr($value, 0, 2).str_repeat('*', min($length - 2, 8)),
+        };
     }
 }
