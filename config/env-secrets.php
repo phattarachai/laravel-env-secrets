@@ -38,4 +38,24 @@ return [
      * override per run with --path.
      */
     'app_path' => env('ENV_SECRETS_APP_PATH', null),
+
+    /*
+     * `secrets:merge` appends keys a local .env is missing. These patterns (Str::is globs) are
+     * NEVER written by it — not even with --replace --force. They are the seatbelt for the day
+     * someone points a merge at a deploy environment: a developer's own APP_KEY, database
+     * credentials and driver choices stay whatever their machine already had. Keys that are the
+     * same everywhere — third-party API tokens — are exactly what is left to flow.
+     */
+    'merge' => [
+        'protected' => [
+            'APP_KEY',
+            'APP_ENV',
+            'APP_URL',
+            'APP_DEBUG',
+            'DB_*',
+            'REDIS_*',
+            '*_DRIVER',
+        ],
+    ],
+
 ];

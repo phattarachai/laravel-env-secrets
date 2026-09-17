@@ -3,6 +3,7 @@
 namespace Phattarachai\EnvSecrets;
 
 use Phattarachai\EnvSecrets\Commands\SecretsEditCommand;
+use Phattarachai\EnvSecrets\Commands\SecretsMergeCommand;
 use Phattarachai\EnvSecrets\Commands\SecretsProvisionCommand;
 use Phattarachai\EnvSecrets\Commands\SecretsReencryptCommand;
 use Phattarachai\EnvSecrets\Commands\SecretsShowCommand;
@@ -20,6 +21,7 @@ class EnvSecretsServiceProvider extends PackageServiceProvider
             ->hasCommands([
                 SecretsProvisionCommand::class,
                 SecretsEditCommand::class,
+                SecretsMergeCommand::class,
                 SecretsReencryptCommand::class,
                 SecretsStatusCommand::class,
                 SecretsShowCommand::class,

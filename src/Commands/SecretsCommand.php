@@ -6,6 +6,7 @@ use Illuminate\Console\Command;
 use Illuminate\Encryption\Encrypter;
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Str;
+use Phattarachai\EnvSecrets\Exceptions\UnterminatedQuote;
 
 /**
  * Shared plumbing for the secrets:* commands.
@@ -151,7 +152,7 @@ abstract class SecretsCommand extends Command
      */
     protected function decryptInMemory(string $env, string $key): ?string
     {
-        $file = base_path(".env.{$env}.encrypted");
+        $file = $this->encryptedPath($env);
 
         if (! file_exists($file)) {
             return null;
@@ -229,5 +230,155 @@ abstract class SecretsCommand extends Command
     protected function isPath(string $value): bool
     {
         return (bool) preg_match('#^/[A-Za-z0-9._/-]*$#', $value);
+    }
+
+    protected function envPath(string $env): string
+    {
+        return base_path(".env.{$env}");
+    }
+
+    protected function encryptedPath(string $env): string
+    {
+        return base_path(".env.{$env}.encrypted");
+    }
+
+    /**
+     * Read an env file into key => the ORIGINAL assignment, verbatim.
+     *
+     * parseEnv() is the wrong tool for anything that writes: it trims values and throws the source
+     * line away, so a value round-tripped through it loses its quoting and inline comments. This
+     * keeps the raw text so it can be appended byte-for-byte. Last assignment wins, matching what a
+     * dotenv reader ends up with.
+     *
+     * A double-quoted value may span real newlines — a PEM key is the usual one — and phpdotenv
+     * reads it as a single value. Each physical line cannot be judged on its own, then: a
+     * continuation is swallowed into the assignment that opened the quote, and the entry's value is
+     * every line of it joined back with the separator the file used.
+     *
+     * @return array<string, string>
+     */
+    protected function readEnvLines(string $contents): array
+    {
+        $eol = str_contains($contents, "\r\n") ? "\r\n" : "\n";
+        $lines = [];
+        $name = null;
+
+        foreach (preg_split('/\r\n|\r|\n/', $this->withoutBom($contents)) ?: [] as $line) {
+            if ($name !== null) {
+                $lines[$name] .= $eol.$line;
+
+                if (! $this->hasOpenQuote($lines[$name])) {
+                    $name = null;
+                }
+
+                continue;
+            }
+
+            $name = $this->nameOf($line);
+
+            if ($name === null) {
+                continue;
+            }
+
+            $lines[$name] = $line;
+
+            if (! $this->hasOpenQuote($line)) {
+                $name = null;
+            }
+        }
+
+        // A quote still open at EOF means every assignment after it was swallowed into one entry.
+        // Returning that map would hide the swallowed keys from the protected-key check AND append
+        // them, verbatim, as one dead block. Refusing is the only safe answer.
+        if ($name !== null) {
+            throw new UnterminatedQuote($name);
+        }
+
+        return $lines;
+    }
+
+    /**
+     * A UTF-8 BOM is not whitespace, so without stripping it the file's FIRST key is invisible to
+     * nameOf() — and a merge would then append a duplicate that shadows the developer's own value.
+     * Editors on Windows write one routinely.
+     */
+    protected function withoutBom(string $contents): string
+    {
+        return str_starts_with($contents, "\xEF\xBB\xBF") ? substr($contents, 3) : $contents;
+    }
+
+    /**
+     * True when the assignment so far opens a double quote it has not closed — i.e. the value keeps
+     * going on the next physical line. Escaped quotes do not count.
+     */
+    protected function hasOpenQuote(string $assignment): bool
+    {
+        if (preg_match('/^\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=\s*"/', $assignment) !== 1) {
+            return false;
+        }
+
+        $value = (string) preg_replace('/^\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=\s*"/', '', $assignment);
+
+        return preg_match('/^(?:[^"\\\\]|\\\\.)*"/s', $value) !== 1;
+    }
+
+    /**
+     * The variable a raw line assigns, or null when the line is blank, a comment, or not an
+     * assignment. `export FOO=1` counts, `FOO` alone does not.
+     */
+    protected function nameOf(string $line): ?string
+    {
+        return preg_match('/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/', $line, $m) === 1 ? $m[1] : null;
+    }
+
+    /**
+     * The value an assignment carries, unquoted — used only to COMPARE two assignments, never to
+     * write one. Quoted values keep their inner `#`; bare values stop at an inline comment, as
+     * dotenv does.
+     *
+     * The closing quote is anchored to the end of the assignment — bar a trailing inline comment —
+     * so `A="x"junk` is not read as `x`. Without the anchor two different values compare equal.
+     *
+     * The unescaping is deliberately phpdotenv's exact set and not stripcslashes(): the latter also
+     * eats the backslash of every unrecognised escape and expands \x41 and \101, which would make
+     * `"C:\path"` and `"C:path"` compare EQUAL. A false "same" is the worst outcome this command
+     * has — it silently skips a key the developer needed.
+     */
+    protected function valueOf(string $line): string
+    {
+        if (preg_match('/^\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=\s*(.*)$/s', $line, $m) !== 1) {
+            return '';
+        }
+
+        $value = rtrim($m[1]);
+
+        if (preg_match('/^"((?:[^"\\\\]|\\\\.)*)"(?:\\s+#.*)?$/s', $value, $q) === 1) {
+            return (string) preg_replace_callback(
+                '/\\\\(.)/s',
+                fn (array $e) => ['n' => "\n", 'r' => "\r", 't' => "\t", 'f' => "\f", 'v' => "\v", '"' => '"', "'" => "'", '\\' => '\\'][$e[1]] ?? $e[0],
+                $q[1],
+            );
+        }
+
+        if (preg_match("/^'([^']*)'(?:\\s+#.*)?$/s", $value, $q) === 1) {
+            return $q[1];
+        }
+
+        return trim((string) preg_split('/\s+#/', $value, 2)[0]);
+    }
+
+    /**
+     * Enough of a value to recognise it, never enough to use it. Every command that prints a value
+     * in bulk goes through this, so a secret cannot reach the scrollback or a CI log.
+     */
+    protected function mask(string $value): string
+    {
+        $length = strlen($value);
+
+        return match (true) {
+            $length === 0 => '(empty)',
+            $length <= 4 => str_repeat('*', $length),
+            default => substr($value, 0, 2).str_repeat('*', min($length - 2, 8)),
+        };
     }
 }

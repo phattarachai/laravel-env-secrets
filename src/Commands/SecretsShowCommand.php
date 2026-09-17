@@ -92,15 +92,4 @@ class SecretsShowCommand extends SecretsCommand
 
         return self::SUCCESS;
     }
-
-    private function mask(string $value): string
-    {
-        $length = strlen($value);
-
-        return match (true) {
-            $length === 0 => '(empty)',
-            $length <= 4 => str_repeat('*', $length),
-            default => substr($value, 0, 2).str_repeat('*', min($length - 2, 8)),
-        };
-    }
 }
