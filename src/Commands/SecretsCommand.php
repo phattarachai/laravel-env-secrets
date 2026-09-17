@@ -242,28 +242,76 @@ abstract class SecretsCommand extends Command
     }
 
     /**
-     * Read an env file into key => the ORIGINAL line, verbatim.
+     * Read an env file into key => the ORIGINAL assignment, verbatim.
      *
      * parseEnv() is the wrong tool for anything that writes: it trims values and throws the source
      * line away, so a value round-tripped through it loses its quoting and inline comments. This
-     * keeps the raw line so it can be appended byte-for-byte. Last assignment wins, matching what a
+     * keeps the raw text so it can be appended byte-for-byte. Last assignment wins, matching what a
      * dotenv reader ends up with.
+     *
+     * A double-quoted value may span real newlines — a PEM key is the usual one — and phpdotenv
+     * reads it as a single value. Each physical line cannot be judged on its own, then: a
+     * continuation is swallowed into the assignment that opened the quote, and the entry's value is
+     * every line of it joined back with the separator the file used.
      *
      * @return array<string, string>
      */
     protected function readEnvLines(string $contents): array
     {
+        $eol = str_contains($contents, "\r\n") ? "\r\n" : "\n";
         $lines = [];
+        $name = null;
 
-        foreach (preg_split('/\r\n|\r|\n/', $contents) ?: [] as $line) {
+        foreach (preg_split('/\r\n|\r|\n/', $this->withoutBom($contents)) ?: [] as $line) {
+            if ($name !== null) {
+                $lines[$name] .= $eol.$line;
+
+                if (! $this->hasOpenQuote($lines[$name])) {
+                    $name = null;
+                }
+
+                continue;
+            }
+
             $name = $this->nameOf($line);
 
-            if ($name !== null) {
-                $lines[$name] = $line;
+            if ($name === null) {
+                continue;
+            }
+
+            $lines[$name] = $line;
+
+            if (! $this->hasOpenQuote($line)) {
+                $name = null;
             }
         }
 
         return $lines;
+    }
+
+    /**
+     * A UTF-8 BOM is not whitespace, so without stripping it the file's FIRST key is invisible to
+     * nameOf() — and a merge would then append a duplicate that shadows the developer's own value.
+     * Editors on Windows write one routinely.
+     */
+    protected function withoutBom(string $contents): string
+    {
+        return str_starts_with($contents, "\xEF\xBB\xBF") ? substr($contents, 3) : $contents;
+    }
+
+    /**
+     * True when the assignment so far opens a double quote it has not closed — i.e. the value keeps
+     * going on the next physical line. Escaped quotes do not count.
+     */
+    protected function hasOpenQuote(string $assignment): bool
+    {
+        if (preg_match('/^\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=\s*"/', $assignment) !== 1) {
+            return false;
+        }
+
+        $value = (string) preg_replace('/^\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=\s*"/', '', $assignment);
+
+        return preg_match('/^(?:[^"\\\\]|\\\\.)*"/s', $value) !== 1;
     }
 
     /**
@@ -276,22 +324,32 @@ abstract class SecretsCommand extends Command
     }
 
     /**
-     * The value a raw line assigns, unquoted — used only to compare two lines, never to write one.
-     * Quoted values keep their inner `#`; bare values stop at an inline comment, as dotenv does.
+     * The value an assignment carries, unquoted — used only to COMPARE two assignments, never to
+     * write one. Quoted values keep their inner `#`; bare values stop at an inline comment, as
+     * dotenv does.
+     *
+     * The unescaping is deliberately phpdotenv's exact set and not stripcslashes(): the latter also
+     * eats the backslash of every unrecognised escape and expands \x41 and \101, which would make
+     * `"C:\path"` and `"C:path"` compare EQUAL. A false "same" is the worst outcome this command
+     * has — it silently skips a key the developer needed.
      */
     protected function valueOf(string $line): string
     {
-        if (preg_match('/^\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=\s*(.*)$/', $line, $m) !== 1) {
+        if (preg_match('/^\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=\s*(.*)$/s', $line, $m) !== 1) {
             return '';
         }
 
         $value = rtrim($m[1]);
 
-        if (preg_match('/^"((?:[^"\\\\]|\\\\.)*)"/', $value, $q) === 1) {
-            return stripcslashes($q[1]);
+        if (preg_match('/^"((?:[^"\\\\]|\\\\.)*)"$/s', $value, $q) === 1) {
+            return (string) preg_replace_callback(
+                '/\\\\(.)/s',
+                fn (array $e) => ['n' => "\n", 'r' => "\r", 't' => "\t", 'f' => "\f", 'v' => "\v", '"' => '"', "'" => "'", '\\' => '\\'][$e[1]] ?? $e[0],
+                $q[1],
+            );
         }
 
-        if (preg_match("/^'([^']*)'/", $value, $q) === 1) {
+        if (preg_match("/^'([^']*)'$/s", $value, $q) === 1) {
             return $q[1];
         }
 

@@ -10,10 +10,9 @@ beforeEach(function () {
 });
 
 afterEach(function () {
-    @unlink(base_path('.env.secretstest'));
-    @unlink(base_path('.env.secretstest.encrypted'));
-    @unlink(base_path('.env'));
-    @unlink(base_path('.env.backup'));
+    foreach ((array) glob(base_path('.env*')) as $path) {
+        @unlink($path);
+    }
 });
 
 function target(string $contents): void
@@ -33,8 +32,7 @@ it('appends a missing key with its source line byte-for-byte', function () use (
 
     $this->artisan('secrets:merge', ['env' => 'secretstest'])->assertSuccessful();
 
-    expect(targetContents())->toContain('OPENROUTER_API_KEY="sk-or-v1 # not-a-comment"')
-        ->and(targetContents())->toStartWith("MAIL_MAILER=log\n");
+    expect(targetContents())->toBe("MAIL_MAILER=log\n\nOPENROUTER_API_KEY=\"sk-or-v1 # not-a-comment\"\n");
 });
 
 it('leaves a key the developer already set alone, whatever its value', function () use ($key) {
@@ -159,5 +157,151 @@ it('never prints the key it fetched, nor a full secret value', function () use (
     Artisan::call('secrets:merge', ['env' => 'secretstest']);
 
     expect(Artisan::output())->not->toContain($key)
+        ->and(Artisan::output())->not->toContain('sk-or-v1-supersecret');
+});
+
+it('carries a multi-line quoted value across as one assignment, unmangled', function () use ($key) {
+    Process::fake(['*' => Process::result(output: $key."\n")]);
+    $pem = "FIREBASE_KEY=\"-----BEGIN PRIVATE KEY-----\nAAAAB3NzaC1yc2E=\nMIIEvQIBADANBg\n-----END PRIVATE KEY-----\"\nSAFE=ok\n";
+    seedEncrypted('secretstest', $key, $pem);
+    target("MAIL_MAILER=log\n");
+
+    $this->artisan('secrets:merge', ['env' => 'secretstest'])->assertSuccessful();
+
+    expect(targetContents())->toBe("MAIL_MAILER=log\n\n".$pem)
+        // The base64 continuation line looks like an assignment; it must not become its own key.
+        ->and(targetContents())->not->toContain("\nAAAAB3NzaC1yc2E=\nAAAAB3NzaC1yc2E=");
+});
+
+it('sees the first key of a BOM-prefixed target instead of appending a shadowing duplicate', function () use ($key) {
+    Process::fake(['*' => Process::result(output: $key."\n")]);
+    seedEncrypted('secretstest', $key, "OPENROUTER_API_KEY=from-the-vault\n");
+    target("\xEF\xBB\xBFOPENROUTER_API_KEY=mine\n");
+
+    $this->artisan('secrets:merge', ['env' => 'secretstest'])->assertSuccessful();
+
+    expect(targetContents())->toBe("\xEF\xBB\xBFOPENROUTER_API_KEY=mine\n")
+        ->and(substr_count(targetContents(), 'OPENROUTER_API_KEY'))->toBe(1);
+});
+
+it('does not call a backslash escape equal to the same string without it', function () use ($key) {
+    Process::fake(['*' => Process::result(output: $key."\n")]);
+    seedEncrypted('secretstest', $key, 'SMTP_PASSWORD="p@ss\\word"'."\n");
+    target('SMTP_PASSWORD="p@ssword"'."\n");
+
+    $this->artisan('secrets:merge', ['env' => 'secretstest', '--dry-run' => true])
+        ->expectsOutputToContain('differs')
+        ->assertSuccessful();
+});
+
+it('compares a quoted and a bare value as the same', function () use ($key) {
+    Process::fake(['*' => Process::result(output: $key."\n")]);
+    seedEncrypted('secretstest', $key, 'FOO="bar"'."\n");
+    target("FOO=bar\n");
+
+    $this->artisan('secrets:merge', ['env' => 'secretstest', '--dry-run' => true])
+        ->expectsOutputToContain('(already set)')
+        ->assertSuccessful();
+});
+
+it('fills a key the target left empty — the cp .env.example .env case', function () use ($key) {
+    Process::fake(['*' => Process::result(output: $key."\n")]);
+    seedEncrypted('secretstest', $key, "OPENROUTER_API_KEY=sk-or-real\n");
+    target("OPENROUTER_API_KEY=\nMAIL_MAILER=log\n");
+
+    $this->artisan('secrets:merge', ['env' => 'secretstest'])->assertSuccessful();
+
+    expect(targetContents())->toBe("OPENROUTER_API_KEY=sk-or-real\nMAIL_MAILER=log\n");
+});
+
+it('treats an empty --replace= as replacing nothing, even with --force', function () use ($key) {
+    Process::fake(['*' => Process::result(output: $key."\n")]);
+    seedEncrypted('secretstest', $key, "FOO=theirs\nBAR=theirs\n");
+    target("FOO=mine\nBAR=mine\n");
+
+    $this->artisan('secrets:merge', ['env' => 'secretstest', '--replace' => '', '--force' => true])
+        ->assertSuccessful();
+
+    expect(targetContents())->toBe("FOO=mine\nBAR=mine\n");
+});
+
+it('refuses to merge at all when the protected list is empty', function () use ($key) {
+    config()->set('env-secrets.merge.protected', []);
+    Process::fake(['*' => Process::result(output: $key."\n")]);
+    seedEncrypted('secretstest', $key, "APP_KEY=base64:theirs\n");
+    target("MAIL_MAILER=log\n");
+
+    $this->artisan('secrets:merge', ['env' => 'secretstest'])->assertFailed();
+
+    expect(targetContents())->toBe("MAIL_MAILER=log\n");
+    Process::assertNothingRan();
+});
+
+it('gives the backup the target\'s own mode, not a world-readable one', function () use ($key) {
+    Process::fake(['*' => Process::result(output: $key."\n")]);
+    seedEncrypted('secretstest', $key, "NEW_TOKEN=abc\n");
+    target("MAIL_MAILER=log\n");
+    chmod(base_path('.env'), 0600);
+
+    $this->artisan('secrets:merge', ['env' => 'secretstest'])->assertSuccessful();
+
+    expect(fileperms(base_path('.env.backup')) & 0777)->toBe(0600)
+        ->and(fileperms(base_path('.env')) & 0777)->toBe(0600);
+});
+
+it('rotates an existing backup instead of eating the last good copy', function () use ($key) {
+    Process::fake(['*' => Process::result(output: $key."\n")]);
+    seedEncrypted('secretstest', $key, "NEW_TOKEN=abc\n");
+    target("MAIL_MAILER=log\n");
+    file_put_contents(base_path('.env.backup'), "PRECIOUS=hand-made\n");
+
+    $this->artisan('secrets:merge', ['env' => 'secretstest'])->assertSuccessful();
+
+    $rotated = (array) glob(base_path('.env.backup.*'));
+    expect($rotated)->toHaveCount(1)
+        ->and((string) file_get_contents($rotated[0]))->toBe("PRECIOUS=hand-made\n")
+        ->and((string) file_get_contents(base_path('.env.backup')))->toBe("MAIL_MAILER=log\n");
+});
+
+it('leaves no .tmp file behind', function () use ($key) {
+    Process::fake(['*' => Process::result(output: $key."\n")]);
+    seedEncrypted('secretstest', $key, "NEW_TOKEN=abc\n");
+    target("MAIL_MAILER=log\n");
+
+    $this->artisan('secrets:merge', ['env' => 'secretstest'])->assertSuccessful();
+
+    expect((array) glob(base_path('.env*.tmp')))->toBe([]);
+});
+
+it('rewrites the LAST assignment when the target names a key twice', function () use ($key) {
+    Process::fake(['*' => Process::result(output: $key."\n")]);
+    seedEncrypted('secretstest', $key, "FOO=theirs\n");
+    target("FOO=first\nMAIL_MAILER=log\nFOO=last\n");
+
+    $this->artisan('secrets:merge', ['env' => 'secretstest', '--replace' => true, '--force' => true])
+        ->assertSuccessful();
+
+    expect(targetContents())->toBe("FOO=first\nMAIL_MAILER=log\nFOO=theirs\n");
+});
+
+it('keeps a --into escape attempt inside the project root', function () use ($key) {
+    Process::fake(['*' => Process::result(output: $key."\n")]);
+    seedEncrypted('secretstest', $key, "NEW_TOKEN=abc\n");
+    target("MAIL_MAILER=log\n");
+
+    $this->artisan('secrets:merge', ['env' => 'secretstest', '--into' => '../../.ssh/config'])
+        ->assertSuccessful();
+
+    expect(targetContents())->toContain('NEW_TOKEN=abc');
+});
+
+it('masks the value it appends rather than printing it', function () use ($key) {
+    Process::fake(['*' => Process::result(output: $key."\n")]);
+    seedEncrypted('secretstest', $key, "OPENROUTER_API_KEY=sk-or-v1-supersecret\n");
+    target("MAIL_MAILER=log\n");
+
+    Artisan::call('secrets:merge', ['env' => 'secretstest']);
+
+    expect(Artisan::output())->toContain('sk********')
         ->and(Artisan::output())->not->toContain('sk-or-v1-supersecret');
 });

@@ -54,6 +54,13 @@ class SecretsMergeCommand extends SecretsCommand
             return self::FAILURE;
         }
 
+        if ($this->protectedPatterns() === []) {
+            $this->error('env-secrets.merge.protected is empty — refusing to merge without it.');
+            $this->line('→ Publish the config, or clear a stale one: php artisan config:clear');
+
+            return self::FAILURE;
+        }
+
         $key = $this->fetchKey($env);
 
         if ($key === null) {
@@ -80,7 +87,7 @@ class SecretsMergeCommand extends SecretsCommand
 
         $this->report($plan, $incoming, $existing);
 
-        $writes = array_filter($plan, fn (string $verdict) => in_array($verdict, ['add', 'replace'], true));
+        $writes = array_filter($plan, fn (string $verdict) => in_array($verdict, ['add', 'fill', 'replace'], true));
 
         if ($writes === []) {
             $this->line("→ Nothing to merge from .env.{$env}.encrypted into ".$this->relative($target).'.');
@@ -117,6 +124,7 @@ class SecretsMergeCommand extends SecretsCommand
      * Decide a verdict per incoming key, in source order.
      *
      * add      — missing from the target, will be appended verbatim
+     * fill     — present but empty (a `cp .env.example .env` placeholder), will be filled in
      * replace  — present, differs, and --replace covers it
      * same     — present with an identical value; nothing to do
      * differs  — present with a different value; left alone (report THAT it differs, never how)
@@ -137,6 +145,9 @@ class SecretsMergeCommand extends SecretsCommand
             $plan[$name] = match (true) {
                 $this->isProtected($name) => 'protected',
                 ! array_key_exists($name, $existing) => 'add',
+                // `FOO=` is what `cp .env.example .env` leaves behind — a placeholder, not a choice.
+                // Filling it is the whole point, so it counts as an addition, not an override.
+                $this->valueOf($existing[$name]) === '' && $this->valueOf($line) !== '' => 'fill',
                 $this->valueOf($line) === $this->valueOf($existing[$name]) => 'same',
                 $replaceAll || in_array($name, $replaceKeys, true) => 'replace',
                 default => 'differs',
@@ -156,6 +167,7 @@ class SecretsMergeCommand extends SecretsCommand
         foreach ($plan as $name => $verdict) {
             $note = match ($verdict) {
                 'add' => $this->mask($this->valueOf($incoming[$name])),
+                'fill' => sprintf('(was empty) → %s', $this->mask($this->valueOf($incoming[$name]))),
                 'replace' => sprintf('%s → %s', $this->mask($this->valueOf($existing[$name])), $this->mask($this->valueOf($incoming[$name]))),
                 'same' => '(already set)',
                 'differs' => '(already set, differs — left alone)',
@@ -196,7 +208,7 @@ class SecretsMergeCommand extends SecretsCommand
         $contents = $original;
 
         foreach ($plan as $name => $verdict) {
-            if ($verdict === 'replace') {
+            if ($verdict === 'replace' || $verdict === 'fill') {
                 $contents = $this->replaceLine($contents, $name, $incoming[$name]);
             }
         }
@@ -207,7 +219,9 @@ class SecretsMergeCommand extends SecretsCommand
             $contents = rtrim($contents, "\r\n")."\n\n".implode("\n", array_map(fn (string $name) => $incoming[$name], $additions))."\n";
         }
 
-        if (@copy($target, $this->backupPath($target)) === false) {
+        if (! $this->backUp($target)) {
+            $this->error('Could not back the target up — nothing was written.');
+
             return false;
         }
 
@@ -236,12 +250,23 @@ class SecretsMergeCommand extends SecretsCommand
     private function atomicallyReplace(string $target, string $contents): bool
     {
         $temp = $target.'.'.bin2hex(random_bytes(6)).'.tmp';
+        $mode = $this->modeOf($target);
 
-        if (@file_put_contents($temp, $contents) === false) {
+        // Create it locked down BEFORE a byte of plaintext goes in: file_put_contents would make it
+        // 0644, and the full merged secrets would sit world-readable until the chmod landed.
+        if (@touch($temp) === false) {
             return false;
         }
 
-        @chmod($temp, (fileperms($target) ?: 0100600) & 0777);
+        @chmod($temp, $mode);
+
+        // A short write is not a failure to file_put_contents — over quota it returns the byte count
+        // it managed. Renaming that over a working .env is exactly what this method exists to stop.
+        if (@file_put_contents($temp, $contents) !== strlen($contents)) {
+            @unlink($temp);
+
+            return false;
+        }
 
         if (! @rename($temp, $target)) {
             @unlink($temp);
@@ -252,20 +277,75 @@ class SecretsMergeCommand extends SecretsCommand
         return true;
     }
 
+    /**
+     * Copy the target aside before it changes. copy() would create the backup 0644 — a permanent,
+     * world-readable file holding every secret the developer has — so it is pre-created with the
+     * target's own mode. An existing backup is rotated rather than overwritten: a second run must
+     * not eat the last good copy, and a developer's own .env.backup is not ours to destroy.
+     */
+    private function backUp(string $target): bool
+    {
+        $backup = $this->backupPath($target);
+
+        if (file_exists($backup) && ! @rename($backup, $backup.'.'.date('YmdHis'))) {
+            return false;
+        }
+
+        if (@touch($backup) === false) {
+            return false;
+        }
+
+        @chmod($backup, $this->modeOf($target));
+
+        return @file_put_contents($backup, (string) file_get_contents($target)) !== false;
+    }
+
+    private function modeOf(string $target): int
+    {
+        return (fileperms($target) ?: 0100600) & 0777;
+    }
+
     private function backupPath(string $target): string
     {
         return $target.'.backup';
     }
 
     /**
-     * The file to merge into. Relative --into values resolve against the project root, so
-     * `--into=.env` means the application's own .env and nothing outside the project.
+     * The file to merge into. A relative --into resolves against the project root and must stay
+     * inside it; an absolute one is taken as given, for the rare case that is deliberate. The
+     * containment check is what makes the docblock true rather than aspirational — `--into=../..
+     * /.ssh/config` would otherwise append assignments to a file that is not an env at all.
      */
     private function resolveTarget(): string
     {
         $into = (string) ($this->option('into') ?: '.env');
 
-        return str_starts_with($into, '/') ? $into : base_path($into);
+        if (str_starts_with($into, '/')) {
+            return $into;
+        }
+
+        $root = rtrim(base_path(), '/');
+        $path = $root.'/'.ltrim($into, '/');
+
+        return str_starts_with($this->normalise($path), $root.'/') ? $path : $root.'/.env';
+    }
+
+    /**
+     * Resolve `.` and `..` textually — realpath() is no use here, the file may not exist yet.
+     */
+    private function normalise(string $path): string
+    {
+        $parts = [];
+
+        foreach (explode('/', $path) as $part) {
+            match ($part) {
+                '', '.' => null,
+                '..' => array_pop($parts),
+                default => $parts[] = $part,
+            };
+        }
+
+        return '/'.implode('/', $parts);
     }
 
     private function relative(string $path): string
@@ -279,7 +359,16 @@ class SecretsMergeCommand extends SecretsCommand
      */
     private function replaceRequested(): bool
     {
-        return $this->option('replace') !== null || $this->input->hasParameterOption('--replace', true);
+        $value = $this->option('replace');
+
+        // `--replace=` with an empty value is a script whose key list came out empty. It must mean
+        // "replace nothing" — reading it as "replace everything" is how an unattended --force run
+        // would overwrite the lot.
+        if (is_string($value)) {
+            return $this->replaceKeys() !== null;
+        }
+
+        return $value !== null || $this->input->hasParameterOption('--replace', true);
     }
 
     /**
@@ -300,9 +389,22 @@ class SecretsMergeCommand extends SecretsCommand
 
     private function isProtected(string $name): bool
     {
-        /** @var array<int, string> $patterns */
-        $patterns = (array) config('env-secrets.merge.protected', []);
+        return Str::is($this->protectedPatterns(), $name);
+    }
 
-        return $patterns !== [] && Str::is($patterns, $name);
+    /**
+     * The seatbelt must fail CLOSED. An empty list would quietly let APP_KEY and DB_* through, and
+     * the likeliest way to get one is a bootstrap/cache/config.php built before this config section
+     * existed — mergeConfigFrom() is a no-op against a cached config. handle() refuses to run rather
+     * than merge unprotected.
+     *
+     * @return array<int, string>
+     */
+    private function protectedPatterns(): array
+    {
+        /** @var array<int, string> $patterns */
+        $patterns = array_values(array_filter((array) config('env-secrets.merge.protected', []), 'is_string'));
+
+        return $patterns;
     }
 }
