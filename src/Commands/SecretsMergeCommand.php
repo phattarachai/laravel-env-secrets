@@ -3,6 +3,7 @@
 namespace Phattarachai\EnvSecrets\Commands;
 
 use Illuminate\Support\Str;
+use Phattarachai\EnvSecrets\Exceptions\UnterminatedQuote;
 
 /**
  * Top up a local .env with keys it is missing, from a committed .env.<env>.encrypted.
@@ -48,6 +49,12 @@ class SecretsMergeCommand extends SecretsCommand
 
         $target = $this->resolveTarget();
 
+        if ($target === null) {
+            $this->error('--into must name a file inside the project.');
+
+            return self::FAILURE;
+        }
+
         if (! file_exists($target)) {
             $this->error("Nothing to merge into: {$target} does not exist.");
 
@@ -80,8 +87,23 @@ class SecretsMergeCommand extends SecretsCommand
 
     private function merge(string $env, string $source, string $target): int
     {
-        $incoming = $this->readEnvLines($source);
-        $existing = $this->readEnvLines((string) file_get_contents($target));
+        try {
+            $incoming = $this->readEnvLines($source);
+        } catch (UnterminatedQuote $e) {
+            $this->error(".env.{$env}.encrypted has an {$e->getMessage()}.");
+            $this->line("→ Fix it at the source: php artisan secrets:edit {$env}");
+
+            return self::FAILURE;
+        }
+
+        try {
+            $existing = $this->readEnvLines((string) file_get_contents($target));
+        } catch (UnterminatedQuote $e) {
+            $this->error($this->relative($target)." has an {$e->getMessage()}.");
+            $this->line('→ Close the quote first; merging into it would append duplicates that shadow your own values.');
+
+            return self::FAILURE;
+        }
 
         $plan = $this->plan($incoming, $existing);
 
@@ -192,7 +214,7 @@ class SecretsMergeCommand extends SecretsCommand
             return true;
         }
 
-        return $this->confirm(sprintf('Overwrite %d existing key(s) in %s?', count($replacing), $this->relative($this->resolveTarget())), false);
+        return $this->confirm(sprintf('Overwrite %d existing key(s) in %s?', count($replacing), $this->relative((string) $this->resolveTarget())), false);
     }
 
     /**
@@ -204,8 +226,7 @@ class SecretsMergeCommand extends SecretsCommand
      */
     private function write(string $target, array $incoming, array $plan): bool
     {
-        $original = (string) file_get_contents($target);
-        $contents = $original;
+        $contents = (string) file_get_contents($target);
 
         foreach ($plan as $name => $verdict) {
             if ($verdict === 'replace' || $verdict === 'fill') {
@@ -229,22 +250,33 @@ class SecretsMergeCommand extends SecretsCommand
     }
 
     /**
-     * Swap the line that assigns $name for the incoming one, verbatim. Only the LAST assignment is
+     * Swap the assignment of $name for the incoming one, verbatim. Only the LAST assignment is
      * rewritten, because that is the one a dotenv reader ends up with.
+     *
+     * The unit swapped is the whole ASSIGNMENT, not one physical line: a value may span several of
+     * them, and replacing only the first would leave the rest of the old value stranded as junk
+     * lines that phpdotenv refuses to parse at all. readEnvLines() already groups them, so the
+     * entry it returns is exactly the span to cut out.
      */
     private function replaceLine(string $contents, string $name, string $line): string
     {
-        $lines = preg_split('/\r\n|\r|\n/', $contents) ?: [];
+        $eol = str_contains($contents, "\r\n") ? "\r\n" : "\n";
+        $assignments = $this->readEnvLines($contents);
 
-        for ($i = count($lines) - 1; $i >= 0; $i--) {
-            if ($this->nameOf($lines[$i]) === $name) {
-                $lines[$i] = $line;
-
-                break;
-            }
+        if (! array_key_exists($name, $assignments)) {
+            return $contents;
         }
 
-        return implode("\n", $lines);
+        $old = $assignments[$name];
+        $at = strrpos($contents, $old);
+
+        if ($at === false) {
+            return $contents;
+        }
+
+        return substr($contents, 0, $at)
+            .str_replace("\n", $eol, $line)
+            .substr($contents, $at + strlen($old));
     }
 
     private function atomicallyReplace(string $target, string $contents): bool
@@ -254,11 +286,19 @@ class SecretsMergeCommand extends SecretsCommand
 
         // Create it locked down BEFORE a byte of plaintext goes in: file_put_contents would make it
         // 0644, and the full merged secrets would sit world-readable until the chmod landed.
-        if (@touch($temp) === false) {
+        // umask so the file is never even momentarily group/other-readable: a process that opens it
+        // in that window keeps read access through the chmod and would see the plaintext written
+        // after it. The chmod is still checked — on a filesystem that ignores it (a bind mount, an
+        // exFAT share) a 0600 .env must not be replaced by a 0644 one while we report success.
+        $umask = umask(0o077);
+        $touched = @touch($temp);
+        umask($umask);
+
+        if ($touched === false || ! @chmod($temp, $mode)) {
+            @unlink($temp);
+
             return false;
         }
-
-        @chmod($temp, $mode);
 
         // A short write is not a failure to file_put_contents — over quota it returns the byte count
         // it managed. Renaming that over a working .env is exactly what this method exists to stop.
@@ -287,17 +327,27 @@ class SecretsMergeCommand extends SecretsCommand
     {
         $backup = $this->backupPath($target);
 
-        if (file_exists($backup) && ! @rename($backup, $backup.'.'.date('YmdHis'))) {
+        // date() alone collides when two runs land in the same second, and rename() would overwrite
+        // the older rotated copy without a word. The suffix carries randomness for the same reason
+        // the temp file does: the name must not be predictable enough to plant a symlink on.
+        if (file_exists($backup) && ! @rename($backup, $backup.'.'.date('YmdHis').'-'.bin2hex(random_bytes(3)))) {
             return false;
         }
 
-        if (@touch($backup) === false) {
+        $contents = @file_get_contents($target);
+
+        if ($contents === false) {
             return false;
         }
 
-        @chmod($backup, $this->modeOf($target));
+        if (@touch($backup) === false || ! @chmod($backup, $this->modeOf($target))) {
+            return false;
+        }
 
-        return @file_put_contents($backup, (string) file_get_contents($target)) !== false;
+        // Same check as atomicallyReplace(): file_put_contents returns the byte count it managed on
+        // a short write, so `!== false` would call a truncated backup a good one — and the original
+        // is overwritten immediately afterwards.
+        return @file_put_contents($backup, $contents) === strlen($contents);
     }
 
     private function modeOf(string $target): int
@@ -316,7 +366,7 @@ class SecretsMergeCommand extends SecretsCommand
      * containment check is what makes the docblock true rather than aspirational — `--into=../..
      * /.ssh/config` would otherwise append assignments to a file that is not an env at all.
      */
-    private function resolveTarget(): string
+    private function resolveTarget(): ?string
     {
         $into = (string) ($this->option('into') ?: '.env');
 
@@ -327,7 +377,7 @@ class SecretsMergeCommand extends SecretsCommand
         $root = rtrim(base_path(), '/');
         $path = $root.'/'.ltrim($into, '/');
 
-        return str_starts_with($this->normalise($path), $root.'/') ? $path : $root.'/.env';
+        return str_starts_with($this->normalise($path), $root.'/') ? $path : null;
     }
 
     /**
@@ -360,6 +410,10 @@ class SecretsMergeCommand extends SecretsCommand
     private function replaceRequested(): bool
     {
         $value = $this->option('replace');
+
+        if ($value === false) {
+            return false;
+        }
 
         // `--replace=` with an empty value is a script whose key list came out empty. It must mean
         // "replace nothing" — reading it as "replace everything" is how an unattended --force run

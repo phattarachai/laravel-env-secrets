@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Process;
+use Phattarachai\EnvSecrets\Commands\SecretsMergeCommand;
 
 $key = str_repeat('a', 32);
 
@@ -284,15 +285,15 @@ it('rewrites the LAST assignment when the target names a key twice', function ()
     expect(targetContents())->toBe("FOO=first\nMAIL_MAILER=log\nFOO=theirs\n");
 });
 
-it('keeps a --into escape attempt inside the project root', function () use ($key) {
-    Process::fake(['*' => Process::result(output: $key."\n")]);
-    seedEncrypted('secretstest', $key, "NEW_TOKEN=abc\n");
+it('refuses a --into that escapes the project root rather than silently using .env', function () {
+    Process::fake(['*' => Process::result(exitCode: 1)]);
     target("MAIL_MAILER=log\n");
 
     $this->artisan('secrets:merge', ['env' => 'secretstest', '--into' => '../../.ssh/config'])
-        ->assertSuccessful();
+        ->assertFailed();
 
-    expect(targetContents())->toContain('NEW_TOKEN=abc');
+    expect(targetContents())->toBe("MAIL_MAILER=log\n");
+    Process::assertNothingRan();
 });
 
 it('masks the value it appends rather than printing it', function () use ($key) {
@@ -304,4 +305,101 @@ it('masks the value it appends rather than printing it', function () use ($key) 
 
     expect(Artisan::output())->toContain('sk********')
         ->and(Artisan::output())->not->toContain('sk-or-v1-supersecret');
+});
+
+it('refuses a source whose quote is never closed, instead of swallowing the keys after it', function () use ($key) {
+    Process::fake(['*' => Process::result(output: $key."\n")]);
+    seedEncrypted('secretstest', $key, "SAFE_TOKEN=\"oops-unterminated\nAPP_KEY=base64:VAULTKEY\nDB_PASSWORD=prod-password\n");
+    target("MAIL_MAILER=log\n");
+
+    $this->artisan('secrets:merge', ['env' => 'secretstest'])->assertFailed();
+
+    // The protected keys must never have reached the file, nor the backup.
+    expect(targetContents())->toBe("MAIL_MAILER=log\n")
+        ->and(file_exists(base_path('.env.backup')))->toBeFalse();
+});
+
+it('refuses a target whose quote is never closed, instead of appending shadowing duplicates', function () use ($key) {
+    Process::fake(['*' => Process::result(output: $key."\n")]);
+    seedEncrypted('secretstest', $key, "OPENROUTER_API_KEY=from-the-vault\n");
+    target("FOO=\"unterminated\nOPENROUTER_API_KEY=my-own-secret\n");
+
+    $this->artisan('secrets:merge', ['env' => 'secretstest'])->assertFailed();
+
+    expect(targetContents())->toBe("FOO=\"unterminated\nOPENROUTER_API_KEY=my-own-secret\n");
+});
+
+it('replaces the whole multi-line assignment, leaving no stranded continuation lines', function () use ($key) {
+    Process::fake(['*' => Process::result(output: $key."\n")]);
+    seedEncrypted('secretstest', $key, "FIREBASE_KEY=\"new-single-line\"\n");
+    target("MAIL_MAILER=log\nFIREBASE_KEY=\"-----BEGIN-----\nAAAA\nBBBB\n-----END-----\"\nAFTER=1\n");
+
+    $this->artisan('secrets:merge', ['env' => 'secretstest', '--replace' => true, '--force' => true])
+        ->assertSuccessful();
+
+    expect(targetContents())->toBe("MAIL_MAILER=log\nFIREBASE_KEY=\"new-single-line\"\nAFTER=1\n");
+});
+
+it('treats an explicit --replace of false as replacing nothing', function () use ($key) {
+    Process::fake(['*' => Process::result(output: $key."\n")]);
+    seedEncrypted('secretstest', $key, "FOO=theirs\nBAR=theirs\n");
+    target("FOO=mine\nBAR=mine\n");
+
+    $this->artisan('secrets:merge', ['env' => 'secretstest', '--replace' => false, '--force' => true])
+        ->assertSuccessful();
+
+    expect(targetContents())->toBe("FOO=mine\nBAR=mine\n");
+});
+
+it('resolves every escape dotenv supports, not just the ones it rejects', function () {
+    $command = new ReflectionClass(SecretsMergeCommand::class);
+    $valueOf = $command->getMethod('valueOf');
+    $instance = $command->newInstanceWithoutConstructor();
+
+    expect($valueOf->invoke($instance, 'A="a\\nb"'))->toBe("a\nb")
+        ->and($valueOf->invoke($instance, 'A="a\\tb"'))->toBe("a\tb")
+        ->and($valueOf->invoke($instance, 'A="a\\rb"'))->toBe("a\rb")
+        ->and($valueOf->invoke($instance, 'A="say \\"hi\\""'))->toBe('say "hi"')
+        ->and($valueOf->invoke($instance, 'A="c:\\\\x"'))->toBe('c:\\x')
+        // ...and does NOT expand what dotenv leaves literal.
+        ->and($valueOf->invoke($instance, 'A="\\x41"'))->toBe('\\x41');
+});
+
+it('keeps a CRLF target on CRLF when it rewrites a line', function () use ($key) {
+    Process::fake(['*' => Process::result(output: $key."\n")]);
+    seedEncrypted('secretstest', $key, "FOO=theirs\n");
+    target("MAIL_MAILER=log\r\nFOO=mine\r\n");
+
+    $this->artisan('secrets:merge', ['env' => 'secretstest', '--replace' => true, '--force' => true])
+        ->assertSuccessful();
+
+    expect(targetContents())->toBe("MAIL_MAILER=log\r\nFOO=theirs\r\n");
+});
+
+it('reads a quoted value with a trailing inline comment as the same value', function () use ($key) {
+    Process::fake(['*' => Process::result(output: $key."\n")]);
+    seedEncrypted('secretstest', $key, 'FOO="bar"'."\n");
+    target('FOO="bar" # set by ops'."\n");
+
+    $this->artisan('secrets:merge', ['env' => 'secretstest', '--dry-run' => true])
+        ->expectsOutputToContain('(already set)')
+        ->assertSuccessful();
+});
+
+it('fills a quoted empty placeholder that carries an inline comment', function () use ($key) {
+    Process::fake(['*' => Process::result(output: $key."\n")]);
+    seedEncrypted('secretstest', $key, "OPENROUTER_API_KEY=sk-or-real\n");
+    target('OPENROUTER_API_KEY="" # your key here'."\n");
+
+    $this->artisan('secrets:merge', ['env' => 'secretstest'])->assertSuccessful();
+
+    expect(targetContents())->toBe("OPENROUTER_API_KEY=sk-or-real\n");
+});
+
+it('does not read a quoted value with trailing junk as the quoted part alone', function () {
+    $command = new ReflectionClass(SecretsMergeCommand::class);
+    $valueOf = $command->getMethod('valueOf');
+    $instance = $command->newInstanceWithoutConstructor();
+
+    expect($valueOf->invoke($instance, 'A="x"junk'))->not->toBe('x');
 });

@@ -6,6 +6,7 @@ use Illuminate\Console\Command;
 use Illuminate\Encryption\Encrypter;
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Str;
+use Phattarachai\EnvSecrets\Exceptions\UnterminatedQuote;
 
 /**
  * Shared plumbing for the secrets:* commands.
@@ -286,6 +287,13 @@ abstract class SecretsCommand extends Command
             }
         }
 
+        // A quote still open at EOF means every assignment after it was swallowed into one entry.
+        // Returning that map would hide the swallowed keys from the protected-key check AND append
+        // them, verbatim, as one dead block. Refusing is the only safe answer.
+        if ($name !== null) {
+            throw new UnterminatedQuote($name);
+        }
+
         return $lines;
     }
 
@@ -328,6 +336,9 @@ abstract class SecretsCommand extends Command
      * write one. Quoted values keep their inner `#`; bare values stop at an inline comment, as
      * dotenv does.
      *
+     * The closing quote is anchored to the end of the assignment — bar a trailing inline comment —
+     * so `A="x"junk` is not read as `x`. Without the anchor two different values compare equal.
+     *
      * The unescaping is deliberately phpdotenv's exact set and not stripcslashes(): the latter also
      * eats the backslash of every unrecognised escape and expands \x41 and \101, which would make
      * `"C:\path"` and `"C:path"` compare EQUAL. A false "same" is the worst outcome this command
@@ -341,7 +352,7 @@ abstract class SecretsCommand extends Command
 
         $value = rtrim($m[1]);
 
-        if (preg_match('/^"((?:[^"\\\\]|\\\\.)*)"$/s', $value, $q) === 1) {
+        if (preg_match('/^"((?:[^"\\\\]|\\\\.)*)"(?:\\s+#.*)?$/s', $value, $q) === 1) {
             return (string) preg_replace_callback(
                 '/\\\\(.)/s',
                 fn (array $e) => ['n' => "\n", 'r' => "\r", 't' => "\t", 'f' => "\f", 'v' => "\v", '"' => '"', "'" => "'", '\\' => '\\'][$e[1]] ?? $e[0],
@@ -349,7 +360,7 @@ abstract class SecretsCommand extends Command
             );
         }
 
-        if (preg_match("/^'([^']*)'$/s", $value, $q) === 1) {
+        if (preg_match("/^'([^']*)'(?:\\s+#.*)?$/s", $value, $q) === 1) {
             return $q[1];
         }
 

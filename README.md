@@ -227,6 +227,8 @@ your team runs after a pull:
    silently. A value that differs is reported as *differing* and nothing more — never what it differs to.
    The one exception is a key that is present but **empty** — the `FOO=` a `cp .env.example .env` leaves
    behind. That is a placeholder, not a choice, so it is filled.
+   An env file whose double quote is never closed is **refused** on either side, rather than merged: the
+   assignments after it would otherwise be swallowed into one entry, invisible to rule 2 below.
 2. **Protected keys are never written**, not even with `--replace --force`. Configure them in
    `config/env-secrets.php`; the defaults cover `APP_KEY`, `APP_ENV`, `DB_*`, `REDIS_*` and `*_DRIVER`, so
    pointing a merge at a deploy env cannot push production credentials onto a laptop.
@@ -237,6 +239,12 @@ your team runs after a pull:
    target's own mode before a byte of plaintext reaches them.
 
 Values only ever appear masked, so this is safe to run in a script whose output someone might paste.
+
+> [!WARNING]
+> Laravel's skeleton `.gitignore` lists `.env` and `.env.backup` **literally**, with no glob, so the
+> rotated backups this command leaves (`.env.backup.20260917121500-a1b2c3`, or `.env.local.backup` for
+> a different `--into`) are untracked files a `git add -A` would happily stage. Add `.env*.backup*` to
+> your `.gitignore` alongside the entries below.
 
 ### Options
 
