@@ -73,12 +73,55 @@ return [
     'slug'     => env('ENV_SECRETS_SLUG', null),              // key filename stem; null → app name
     'group'    => env('ENV_SECRETS_GROUP', null),             // unix group that may read the key; null → owner only
     'app_path' => env('ENV_SECRETS_APP_PATH', null),          // deployed app dir on the box, for --remote
+
+    'environments' => [],                                     // per-env overrides — see below
 ];
 ```
 
-Every value is overridable per run with `--host`, `--dir`, `--slug`, `--group`. When an option is omitted the command
-uses the config value; when the config `slug` is `null` it derives one from `config('app.name')` (falling
-back to the application directory name).
+Every value is overridable per run with `--host`, `--dir`, `--slug`, `--group`, `--path`. When an option is omitted
+the command uses the config value; when the config `slug` is `null` it derives one from `config('app.name')`
+(falling back to the application directory name).
+
+### Envs that live on different boxes
+
+When your envs do not all share one box — say production and uat on `necta`, staging on `necta-v2dev` —
+name the odd ones out in `environments`. Any of `host`, `dir`, `slug`, `group` and `app_path` can be set
+per env; whatever an env leaves out falls back to the top-level value:
+
+```php
+'host' => 'necta',
+'dir'  => '/etc/nectapharma',
+
+'environments' => [
+    'staging' => ['host' => 'necta-v2dev'],
+],
+```
+
+Now `secrets:edit staging` goes to `necta-v2dev` and `secrets:edit production` to `necta`, with no flag to
+remember. Each setting resolves most specific first:
+
+1. the CLI option (`--host`, `--dir`, `--slug`, `--group`, `--path`),
+2. `environments.<env>.<setting>`,
+3. the top-level `<setting>`,
+4. the built-in default.
+
+Prefer the map to a `--host` you have to remember: a forgotten flag sends the command to the **wrong box**.
+To make that obvious, every command opens by printing the box and file it resolved (on stderr, so a
+`secrets:show <env> <NAME>` value on stdout stays clean for scripts):
+
+```
+Box  necta-v2dev:/etc/nectapharma/backoffice.staging.key
+```
+
+and `secrets:status` prints the host and key path — and where each came from — before it reads anything:
+
+```
+Host          necta-v2dev  (environments.staging)
+Key           /etc/nectapharma/backoffice.staging.key  (env-secrets.dir, env-secrets.slug)
+Readable      OK
+.encrypted    .env.staging.encrypted  OK
+Decrypts      OK
+```
 
 ## Two infra snippets you add yourself
 
@@ -134,10 +177,10 @@ password manager (it is already on your clipboard).
 | Option    | Default                              | Purpose                                             |
 |-----------|--------------------------------------|-----------------------------------------------------|
 | `env`     | *(required)*                         | Environment to encrypt, e.g. `uat`, `production`.   |
-| `--host`  | `config('env-secrets.host')`         | ssh host alias of the box that stores the key.      |
-| `--dir`   | `config('env-secrets.dir')`          | Directory on the box that holds the key files.      |
-| `--slug`  | config, else app name                | Filename stem — key is `<slug>.<env>.key`.          |
-| `--group` | `config('env-secrets.group')`        | Unix group allowed to read the key — see below.     |
+| `--host`  | per-env, else `config('env-secrets.host')` | ssh host alias of the box that stores the key.      |
+| `--dir`   | per-env, else `config('env-secrets.dir')`  | Directory on the box that holds the key files.      |
+| `--slug`  | per-env, else config, else app name        | Filename stem — key is `<slug>.<env>.key`.          |
+| `--group` | per-env, else `config('env-secrets.group')` | Unix group allowed to read the key — see below.     |
 | `--local` | off                                  | Encrypt locally only; skip installing on the box.   |
 
 ### Sharing a key with a team
@@ -277,6 +320,8 @@ Values only ever appear masked, so this is safe to run in a script whose output 
 - The key is streamed to the server over **ssh stdin** and to the clipboard over **pbcopy stdin** — never
   as a shell argument, so it stays out of `ps`, shell history, and CI logs.
 - On the box the key file is created `600`, owned by the connecting ssh user, in a `700` directory.
+- Every command prints the host and key path it resolved before touching the box, so a run aimed at the
+  wrong box shows it on the first line.
 - `env`, `slug`, and `dir` are validated (`[a-z0-9-]` / absolute path) before any process runs.
 
 ## Testing

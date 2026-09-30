@@ -29,9 +29,9 @@ class SecretsMergeCommand extends SecretsCommand
 {
     protected $signature = 'secrets:merge
         {env : Environment to merge from (e.g. local, qas, production)}
-        {--host= : SSH host alias that stores the key (default: config env-secrets.host)}
-        {--dir= : Directory on the box holding the key files (default: config env-secrets.dir)}
-        {--slug= : Filename stem — <slug>.<env>.key (default: config, else the app name)}
+        {--host= : SSH host alias that stores the key (default: config env-secrets.environments.<env>.host, else env-secrets.host)}
+        {--dir= : Directory on the box holding the key files (default: config env-secrets.environments.<env>.dir, else env-secrets.dir)}
+        {--slug= : Filename stem — <slug>.<env>.key (default: config env-secrets.environments.<env>.slug, else env-secrets.slug, else the app name)}
         {--into=.env : The file to merge into, relative to the project root unless absolute}
         {--replace= : Overwrite keys that already exist — bare to overwrite all (asks first), or a comma-separated list to target only those}
         {--force : Skip the --replace confirmation (for non-interactive runs)}
@@ -46,6 +46,8 @@ class SecretsMergeCommand extends SecretsCommand
         if (! $this->validEnv($env)) {
             return self::FAILURE;
         }
+
+        $this->announceTarget($env);
 
         $target = $this->resolveTarget();
 

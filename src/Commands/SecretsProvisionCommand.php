@@ -16,8 +16,8 @@ use Illuminate\Support\Facades\Process;
  * server over ssh stdin and the clipboard via pbcopy stdin. Run this from the machine that holds
  * the plaintext .env.<env> (i.e. a developer machine), not on the server.
  *
- * Host, dir, and slug default from config/env-secrets.php; each is overridable per run with an
- * explicit --host / --dir / --slug option.
+ * Host, dir, slug and group default from config/env-secrets.php — per env when the
+ * `environments` map names this one — and each is overridable per run with an explicit option.
  *
  * Once provisioned, edit the file later with `secrets:edit` + `secrets:reencrypt`, which reuse the
  * installed key instead of minting a new one.
@@ -26,10 +26,10 @@ class SecretsProvisionCommand extends SecretsCommand
 {
     protected $signature = 'secrets:provision
         {env : Environment to encrypt and provision a key for (e.g. uat, production)}
-        {--host= : SSH host alias of the box that stores the decryption key (default: config env-secrets.host)}
-        {--dir= : Directory on the box that holds the key files (default: config env-secrets.dir)}
-        {--slug= : Filename stem — the key is written as <slug>.<env>.key (default: config, else the app name)}
-        {--group= : Unix group granted read access to the key, so more than one teammate can run these commands (default: config env-secrets.group; none = owner-only)}
+        {--host= : SSH host alias of the box that stores the decryption key (default: config env-secrets.environments.<env>.host, else env-secrets.host)}
+        {--dir= : Directory on the box that holds the key files (default: config env-secrets.environments.<env>.dir, else env-secrets.dir)}
+        {--slug= : Filename stem — the key is written as <slug>.<env>.key (default: config env-secrets.environments.<env>.slug, else env-secrets.slug, else the app name)}
+        {--group= : Unix group granted read access to the key, so more than one teammate can run these commands (default: config env-secrets.environments.<env>.group, else env-secrets.group; none = owner-only)}
         {--local : Encrypt locally only; skip installing the key on the server}';
 
     protected $description = 'Mint an env-encryption key, encrypt .env.<env>, and install the key on the deploy box (never prints the key).';
@@ -48,6 +48,10 @@ class SecretsProvisionCommand extends SecretsCommand
             $this->error("Not a valid unix group name: {$group}");
 
             return self::FAILURE;
+        }
+
+        if (! $this->option('local')) {
+            $this->announceTarget($env);
         }
 
         $plaintext = base_path(".env.{$env}");

@@ -22,28 +22,64 @@ abstract class SecretsCommand extends Command
     protected const CIPHER = 'AES-256-CBC';
 
     /**
-     * Explicit --host, else config('env-secrets.host'), else a sensible fallback.
+     * Every box setting resolves the same way, most specific first:
+     *
+     *   1. the explicit CLI option (--host, --dir, --slug, --group, --path),
+     *   2. config('env-secrets.environments.<env>.<setting>') — the per-env override,
+     *   3. config('env-secrets.<setting>') — the project-wide default,
+     *   4. the resolver's own fallback.
+     *
+     * The per-env map is what lets one project keep production on one box and staging on another
+     * without anyone having to remember --host. A forgotten flag reaches the WRONG box, and "the key
+     * file happens to be missing there" is the only thing standing between that and a bad day.
+     */
+    protected function setting(string $setting, ?string $option = null): mixed
+    {
+        $option ??= $setting;
+        $explicit = $this->hasOption($option) ? $this->option($option) : null;
+
+        return $explicit ?: $this->environmentSetting($setting) ?: config("env-secrets.{$setting}");
+    }
+
+    /**
+     * config('env-secrets.environments.<env>.<setting>'), read by array key rather than dot notation
+     * so an env name is never re-interpreted as a config path before validEnv() has seen it.
+     */
+    protected function environmentSetting(string $setting): mixed
+    {
+        if (! $this->hasArgument('env')) {
+            return null;
+        }
+
+        $environments = config('env-secrets.environments');
+        $overrides = is_array($environments) ? ($environments[(string) $this->argument('env')] ?? null) : null;
+
+        return is_array($overrides) ? ($overrides[$setting] ?? null) : null;
+    }
+
+    /**
+     * The ssh host alias of the box that stores this env's key — see setting() for the order.
      */
     protected function resolveHost(): string
     {
-        return (string) ($this->option('host') ?: config('env-secrets.host') ?: 'necta');
+        return (string) ($this->setting('host') ?: 'necta');
     }
 
     /**
-     * Explicit --dir, else config('env-secrets.dir'), else a sensible fallback.
+     * The directory on the box that holds the key files — see setting() for the order.
      */
     protected function resolveDir(): string
     {
-        return (string) ($this->option('dir') ?: config('env-secrets.dir') ?: '/etc/secrets');
+        return (string) ($this->setting('dir') ?: '/etc/secrets');
     }
 
     /**
-     * Explicit --slug, else config('env-secrets.slug'), else a slug of the app
-     * name, else the application directory name.
+     * The key filename stem — see setting() for the order — else a slug of the app name, else the
+     * application directory name.
      */
     protected function resolveSlug(): string
     {
-        $slug = $this->option('slug') ?: config('env-secrets.slug');
+        $slug = $this->setting('slug');
 
         if (! $slug) {
             $slug = Str::slug((string) config('app.name')) ?: basename(base_path());
@@ -53,12 +89,12 @@ abstract class SecretsCommand extends Command
     }
 
     /**
-     * Deployed application directory on the box (for --remote reads). Explicit --path,
-     * else config('env-secrets.app_path'). Null disables remote reads.
+     * Deployed application directory on the box (for --remote reads) — see setting() for the order;
+     * the option is --path. Null disables remote reads.
      */
     protected function resolveAppPath(): ?string
     {
-        $path = ($this->hasOption('path') ? $this->option('path') : null) ?: config('env-secrets.app_path');
+        $path = $this->setting('app_path', 'path');
 
         return $path ? rtrim((string) $path, '/') : null;
     }
@@ -69,15 +105,54 @@ abstract class SecretsCommand extends Command
     }
 
     /**
-     * Explicit --group, else config('env-secrets.group'), else null (key stays owned by
-     * the ssh user alone). A group is what lets more than one teammate run these commands:
-     * the key is fetched with a plain `ssh <host> cat`, never sudo.
+     * The unix group granted read access to the key — see setting() for the order — else null (key
+     * stays owned by the ssh user alone). A group is what lets more than one teammate run these
+     * commands: the key is fetched with a plain `ssh <host> cat`, never sudo.
      */
     protected function resolveGroup(): ?string
     {
-        $group = $this->hasOption('group') ? $this->option('group') : null;
+        $group = $this->setting('group');
 
-        return ($group ?: config('env-secrets.group')) ?: null;
+        return $group ? (string) $group : null;
+    }
+
+    /**
+     * Where a setting's value came from, in setting()'s terms — printed next to it so "why is this
+     * going to that box" answers itself.
+     */
+    protected function settingSource(string $setting, ?string $option = null, string $fallback = 'default'): string
+    {
+        $option ??= $setting;
+
+        return match (true) {
+            $this->hasOption($option) && (bool) $this->option($option) => "--{$option}",
+            (bool) $this->environmentSetting($setting) => "environments.{$this->argument('env')}",
+            (bool) config("env-secrets.{$setting}") => "env-secrets.{$setting}",
+            default => $fallback,
+        };
+    }
+
+    /**
+     * Say which box and which file this run is about to touch, before it touches anything — so a
+     * wrong host is obvious on the first line rather than inferred from an error. It goes to stderr:
+     * `secrets:show <env> <NAME>` prints a bare value that scripts capture from stdout.
+     */
+    protected function announce(string $host, string $path): void
+    {
+        $this->output->getErrorStyle()->writeln("<comment>Box</comment>  {$host}:{$path}");
+    }
+
+    /**
+     * announce() for the file this run reads on the box: the env's key, or with --remote the live
+     * .env. Silent when --remote has no app path — the command refuses on the next line anyway.
+     */
+    protected function announceTarget(string $env, bool $remote = false): void
+    {
+        $path = $remote ? $this->resolveAppPath() : $this->keyPath($env);
+
+        if ($path !== null) {
+            $this->announce($this->resolveHost(), $remote ? "{$path}/.env" : $path);
+        }
     }
 
     /**

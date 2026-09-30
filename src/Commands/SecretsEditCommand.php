@@ -13,9 +13,9 @@ class SecretsEditCommand extends SecretsCommand
 {
     protected $signature = 'secrets:edit
         {env : Environment to decrypt for editing (e.g. uat, production)}
-        {--host= : SSH host alias that stores the key (default: config env-secrets.host)}
-        {--dir= : Directory on the box holding the key files (default: config env-secrets.dir)}
-        {--slug= : Filename stem — <slug>.<env>.key (default: config, else the app name)}';
+        {--host= : SSH host alias that stores the key (default: config env-secrets.environments.<env>.host, else env-secrets.host)}
+        {--dir= : Directory on the box holding the key files (default: config env-secrets.environments.<env>.dir, else env-secrets.dir)}
+        {--slug= : Filename stem — <slug>.<env>.key (default: config env-secrets.environments.<env>.slug, else env-secrets.slug, else the app name)}';
 
     protected $description = 'Fetch the key from the box and decrypt .env.<env> for editing (never prints the key).';
 
@@ -26,6 +26,8 @@ class SecretsEditCommand extends SecretsCommand
         if (! $this->validEnv($env)) {
             return self::FAILURE;
         }
+
+        $this->announceTarget($env);
 
         $key = $this->fetchKey($env);
 

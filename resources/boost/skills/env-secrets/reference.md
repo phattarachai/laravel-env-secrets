@@ -50,12 +50,35 @@ asserts it matches the plaintext before you commit. The key cannot drift.
 | `secrets:reencrypt <env>` | box | no (`--prune` deletes it) | re-encrypt edited env + verify round-trip |
 | `secrets:status <env>` | box (local) / none (`--remote`) | no | health check |
 | `secrets:show <env> [name]` | box (local) / none (`--remote`) | no | inspect names / one value |
+| `secrets:merge <env>` | box | appends to the local `.env` | top up missing keys |
 
-Shared options: `--host`, `--dir`, `--slug` (all commands); `--path` (`status`/`show`, for `--remote`).
+Shared options: `--host`, `--dir`, `--slug` (all commands); `--group` (`provision`); `--path`
+(`status`/`show`, for `--remote`).
+
+## Which box: per-env settings
+
+One project can keep its envs on different boxes. `config('env-secrets.environments')` maps an env name
+to overrides of `host`, `dir`, `slug`, `group` and `app_path`; anything an env leaves out falls back to the
+top-level key:
+
+```php
+'host' => 'necta',
+'dir'  => '/etc/nectapharma',
+'environments' => [
+    'staging' => ['host' => 'necta-v2dev'],   // production + uat stay on necta
+],
+```
+
+Resolution, most specific first: CLI option → `environments.<env>.<setting>` → `<setting>` → built-in
+default. It is implemented once, in `SecretsCommand::setting()`, so every command honours it.
+
+Each command prints `Box  <host>:<key path>` (stderr) before touching the box, and `secrets:status`
+prints `Host` / `Key` with their source (`--host`, `environments.<env>`, `env-secrets.host`, `default`).
+A wrong box is visible on the first line — check it before trusting a "key missing" error.
 
 Shared plumbing lives in `Phattarachai\EnvSecrets\Commands\SecretsCommand` (the abstract base):
 `fetchKey()` (ssh read), `encrypt()` (silent in-process `env:encrypt --key`), `decryptInMemory()`,
-`readRemoteEnv()`, `parseEnv()`, and the host/dir/slug/app_path resolvers.
+`readRemoteEnv()`, `parseEnv()`, and the host/dir/slug/group/app_path resolvers (all via `setting()`).
 
 ## Recovering a broken (MAC-invalid) encrypted file
 

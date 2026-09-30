@@ -17,10 +17,10 @@ class SecretsShowCommand extends SecretsCommand
     protected $signature = 'secrets:show
         {env : Environment to inspect (e.g. uat, production)}
         {name? : A single variable to reveal; omit to list names with masked values}
-        {--host= : SSH host alias that stores the key (default: config env-secrets.host)}
-        {--dir= : Directory on the box holding the key files (default: config env-secrets.dir)}
-        {--slug= : Filename stem — <slug>.<env>.key (default: config, else the app name)}
-        {--path= : Deployed app directory on the box for --remote (default: config env-secrets.app_path)}
+        {--host= : SSH host alias that stores the key (default: config env-secrets.environments.<env>.host, else env-secrets.host)}
+        {--dir= : Directory on the box holding the key files (default: config env-secrets.environments.<env>.dir, else env-secrets.dir)}
+        {--slug= : Filename stem — <slug>.<env>.key (default: config env-secrets.environments.<env>.slug, else env-secrets.slug, else the app name)}
+        {--path= : Deployed app directory on the box for --remote (default: config env-secrets.environments.<env>.app_path, else env-secrets.app_path)}
         {--remote : Read the live deployed .env on the server instead of the committed .encrypted}';
 
     protected $description = 'Inspect .env.<env> without writing plaintext to disk — masked names by default, one value when named.';
@@ -32,6 +32,8 @@ class SecretsShowCommand extends SecretsCommand
         if (! $this->validEnv($env)) {
             return self::FAILURE;
         }
+
+        $this->announceTarget($env, (bool) $this->option('remote'));
 
         $contents = $this->option('remote') ? $this->readRemoteEnv() : $this->decryptLocally($env);
 

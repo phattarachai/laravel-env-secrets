@@ -1,7 +1,7 @@
 ---
 name: env-secrets
-description: 'Use this skill whenever you need to read or change an encrypted environment file (`.env.<env>.encrypted`) in a project using `phattarachai/laravel-env-secrets` — production, uat, or any non-local env. It is the ONLY correct way to touch these files: NEVER run `php artisan env:encrypt` by hand, because that command reads the key only from `--key` (it ignores `LARAVEL_ENV_ENCRYPTION_KEY`) and, run non-interactively, silently mints a throwaway random key — producing ciphertext the deploy box can no longer decrypt. This package''s `secrets:*` commands fetch the real key from the deploy box over ssh and always pass it through, so the key can never drift and never lands in argv, shell history, or a CI log. Covers editing an env (`secrets:edit` → `secrets:reencrypt`), first-time setup (`secrets:provision`), health-checking (`secrets:status`), and peeking at values without decrypting to disk (`secrets:show`), plus the `--remote` mode that reads the live deployed `.env`. Triggers on: "edit the production env", "add a key to .env.production", "re-encrypt the env", ".env.production.encrypted", "env:encrypt", "MAC is invalid", "decryption failed after deploy", "what is DB_PASSWORD on production", "rotate an env value", or any request to change committed encrypted env files.'
-version: 2026.09.09.1
+description: 'Use this skill whenever you need to read or change an encrypted environment file (`.env.<env>.encrypted`) in a project using `phattarachai/laravel-env-secrets` — production, uat, or any non-local env. It is the ONLY correct way to touch these files: NEVER run `php artisan env:encrypt` by hand, because that command reads the key only from `--key` (it ignores `LARAVEL_ENV_ENCRYPTION_KEY`) and, run non-interactively, silently mints a throwaway random key — producing ciphertext the deploy box can no longer decrypt. This package''s `secrets:*` commands fetch the real key from the deploy box over ssh and always pass it through, so the key can never drift and never lands in argv, shell history, or a CI log. Covers editing an env (`secrets:edit` → `secrets:reencrypt`), first-time setup (`secrets:provision`), health-checking (`secrets:status`), and peeking at values without decrypting to disk (`secrets:show`), plus the `--remote` mode that reads the live deployed `.env`, and the per-env `environments` map for projects whose envs live on different boxes. Triggers on: "edit the production env", "add a key to .env.production", "re-encrypt the env", ".env.production.encrypted", "env:encrypt", "MAC is invalid", "decryption failed after deploy", "what is DB_PASSWORD on production", "rotate an env value", "staging is on a different box", "--host", or any request to change committed encrypted env files.'
+version: 2026.09.30.1
 ---
 
 # Env Secrets
@@ -76,7 +76,24 @@ php artisan secrets:status production --remote          # the live .env is prese
 - `host` (`--host`) — ssh alias of the box that stores the key.
 - `dir` (`--dir`) — directory on the box holding key files.
 - `slug` (`--slug`) — filename stem; the key is `<slug>.<env>.key`. Defaults to the app-name slug.
+- `group` (`--group`) — unix group that may read the key; null keeps it owner-only.
 - `app_path` (`--path`) — deployed app directory, for `--remote` reads.
+- `environments` — per-env overrides of any of the above, for envs on a different box:
+
+```php
+'environments' => [
+    'staging' => ['host' => 'necta-v2dev'],
+],
+```
+
+Each setting resolves: CLI option → `environments.<env>` → top-level key → default. **If an env lives on
+a different box, put it in `environments` — do not rely on remembering `--host`.** A forgotten flag sends
+the command to the wrong box.
+
+Every command's first line names the box and key it resolved — `Box  <host>:<path>` — and
+`secrets:status <env>` prints `Host` and `Key` with where each value came from. **Read that line.** If it
+names the wrong box, stop and fix the config; never work around it by hand-running `env:encrypt` /
+`env:decrypt` or minting a key yourself.
 
 ## When something is wrong
 
@@ -86,4 +103,6 @@ php artisan secrets:status production --remote          # the live .env is prese
   then redo the change through `secrets:edit` + `secrets:reencrypt`. Details in `reference.md`.
 - **`secrets:status <env>` returns MISSING on "Decrypts"** — the box key does not match the committed file.
   Same cause as above.
-- **`Could not read the key ...`** — the key isn't on the box for that env; run `secrets:provision <env>`.
+- **`Could not read the key ...`** — first check the `Box` line: if the host is wrong for that env, add
+  it to `environments` (or pass `--host`). Only if the host is right is the key genuinely missing — then
+  `secrets:provision <env>`, which mints a NEW key (never do that for an env that already deploys).
