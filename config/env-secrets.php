@@ -40,6 +40,23 @@ return [
     'app_path' => env('ENV_SECRETS_APP_PATH', null),
 
     /*
+     * Per-environment overrides, for a project whose envs do not all live on one box. Any of
+     * host / dir / slug / group / app_path may be set per env; whatever an env leaves out falls
+     * back to the top-level value above. The order, most specific first: the CLI option
+     * (--host, --dir, --slug, --group, --path), then this map, then the top-level key, then the
+     * built-in default.
+     *
+     * Set it here rather than remembering --host: a forgotten flag sends the command to the wrong
+     * box. Every command prints the host and key path it resolved before it does anything.
+     *
+     *   'environments' => [
+     *       'staging' => ['host' => 'app-staging', 'app_path' => '/var/www/staging'],
+     *       'production' => ['app_path' => '/var/www/production'],
+     *   ],
+     */
+    'environments' => [],
+
+    /*
      * `secrets:merge` appends keys a local .env is missing. These patterns (Str::is globs) are
      * NEVER written by it — not even with --replace --force. They are the seatbelt for the day
      * someone points a merge at a deploy environment: a developer's own APP_KEY, database

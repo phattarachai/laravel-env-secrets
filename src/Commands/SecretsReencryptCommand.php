@@ -16,9 +16,9 @@ class SecretsReencryptCommand extends SecretsCommand
 {
     protected $signature = 'secrets:reencrypt
         {env : Environment to re-encrypt with the key already on the box (e.g. uat, production)}
-        {--host= : SSH host alias that stores the key (default: config env-secrets.host)}
-        {--dir= : Directory on the box holding the key files (default: config env-secrets.dir)}
-        {--slug= : Filename stem — <slug>.<env>.key (default: config, else the app name)}
+        {--host= : SSH host alias that stores the key (default: config env-secrets.environments.<env>.host, else env-secrets.host)}
+        {--dir= : Directory on the box holding the key files (default: config env-secrets.environments.<env>.dir, else env-secrets.dir)}
+        {--slug= : Filename stem — <slug>.<env>.key (default: config env-secrets.environments.<env>.slug, else env-secrets.slug, else the app name)}
         {--prune : Delete the plaintext .env.<env> after a verified re-encrypt}';
 
     protected $description = 'Re-encrypt .env.<env> with the key already on the box and verify the round-trip (never prints the key).';
@@ -30,6 +30,8 @@ class SecretsReencryptCommand extends SecretsCommand
         if (! $this->validEnv($env)) {
             return self::FAILURE;
         }
+
+        $this->announceTarget($env);
 
         $plaintext = base_path(".env.{$env}");
 
