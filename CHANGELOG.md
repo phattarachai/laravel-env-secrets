@@ -7,6 +7,28 @@ Release notes are drafted automatically from merged pull requests and published 
 
 This file records anything released before that automation landed, plus upgrade notes for releases that need them.
 
+## Unreleased
+
+### Fixed
+
+- `secrets:provision` no longer requires sudo. Before, it ran `sudo install …; sudo tee …` on every box,
+  so a key dir in the ssh user's home on a box with no passwordless sudo (a Mac mini) failed with
+  `sudo: a terminal is required to read the password`. Now it uses sudo only when the ssh user cannot own
+  the key dir, and then only as `sudo -n`.
+- A failed install no longer loses the key. The new key is on the clipboard with a `pbpaste | ssh …`
+  command to install it by hand. Without a clipboard, `.env.<env>.encrypted` is restored. On the box, the
+  key is written to a `.tmp` beside the old one and renamed over it, so a failure leaves the current key
+  intact.
+
+### Added
+
+- `sudo` setting: `auto` (default), `always` / `true`, or `never` / `false`. Set it in config, per env in
+  `environments`, or per run with `--sudo`.
+
+### Upgrading
+
+Nothing to do. The published config does not need the new key; it defaults to `auto`.
+
 ## v1.4.0 — 2026-09-30
 
 ### Added

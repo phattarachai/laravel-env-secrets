@@ -32,6 +32,21 @@ return [
     'group' => env('ENV_SECRETS_GROUP', null),
 
     /*
+     * How `secrets:provision` may use sudo when it installs the key:
+     *
+     *   'auto'   — only when it has to: the key dir is created and written as the ssh user whenever
+     *              that user owns it or can create it (a dir under their home), and `sudo -n` is
+     *              reached for only when it cannot (a dir under /etc) or for a group the user is
+     *              not in. The default.
+     *   'always' — `sudo -n` for the dir and the group change. (true works too.)
+     *   'never'  — no sudo at all, e.g. a Mac mini with no passwordless sudo. (false works too.)
+     *
+     * sudo always runs as `sudo -n`: over a non-interactive ssh a password prompt can never be
+     * answered, so it fails fast instead. Overridable per run with --sudo.
+     */
+    'sudo' => env('ENV_SECRETS_SUDO', 'auto'),
+
+    /*
      * Absolute path to the deployed application directory on the box. Used by
      * `secrets:status --remote` and `secrets:show --remote` to read the live
      * .env that is actually running there. Leave null to disable remote reads;
@@ -41,9 +56,9 @@ return [
 
     /*
      * Per-environment overrides, for a project whose envs do not all live on one box. Any of
-     * host / dir / slug / group / app_path may be set per env; whatever an env leaves out falls
+     * host / dir / slug / group / sudo / app_path may be set per env; whatever an env leaves out falls
      * back to the top-level value above. The order, most specific first: the CLI option
-     * (--host, --dir, --slug, --group, --path), then this map, then the top-level key, then the
+     * (--host, --dir, --slug, --group, --sudo, --path), then this map, then the top-level key, then the
      * built-in default.
      *
      * Set it here rather than remembering --host: a forgotten flag sends the command to the wrong
@@ -52,6 +67,7 @@ return [
      *   'environments' => [
      *       'staging' => ['host' => 'app-staging', 'app_path' => '/var/www/staging'],
      *       'production' => ['app_path' => '/var/www/production'],
+     *       'mini' => ['host' => 'pc-mini', 'dir' => '/Users/deploy/.config/env-secrets', 'sudo' => 'never'],
      *   ],
      */
     'environments' => [],
