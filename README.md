@@ -44,7 +44,9 @@ through a command argument or `ps`. `secrets:provision` does exactly that and no
 2. `secrets:provision <env>` mints a 32-hex-char key, runs `env:encrypt --key=… --env=<env>`, and produces
    `.env.<env>.encrypted`. **You commit that file.**
 3. The same key is installed on the deploy box at `<dir>/<slug>.<env>.key` (mode `600`, owned by the ssh
-   user) and copied to your clipboard to paste into your password manager as a backup.
+   user) and copied to your clipboard to paste into your password manager as a backup. It uses sudo only
+   if the ssh user cannot own that directory (see [Installing without sudo](#installing-without-sudo)).
+   If the install fails, the key is still on your clipboard, with the command to install it by hand.
 4. Your deploy script exports the key from that file and runs `env:decrypt` to regenerate `.env` on the
    box before the app boots.
 
@@ -72,20 +74,21 @@ return [
     'dir'      => env('ENV_SECRETS_DIR', '/etc/nectapharma'), // where key files live on the box
     'slug'     => env('ENV_SECRETS_SLUG', null),              // key filename stem; null → app name
     'group'    => env('ENV_SECRETS_GROUP', null),             // unix group that may read the key; null → owner only
+    'sudo'     => env('ENV_SECRETS_SUDO', 'auto'),            // auto | always | never — how the install may use sudo
     'app_path' => env('ENV_SECRETS_APP_PATH', null),          // deployed app dir on the box, for --remote
 
     'environments' => [],                                     // per-env overrides — see below
 ];
 ```
 
-Every value is overridable per run with `--host`, `--dir`, `--slug`, `--group`, `--path`. When an option is omitted
+Every value is overridable per run with `--host`, `--dir`, `--slug`, `--group`, `--sudo`, `--path`. When an option is omitted
 the command uses the config value; when the config `slug` is `null` it derives one from `config('app.name')`
 (falling back to the application directory name).
 
 ### Envs that live on different boxes
 
 When your envs do not all share one box — say production and uat on `necta`, staging on `necta-v2dev` —
-name the odd ones out in `environments`. Any of `host`, `dir`, `slug`, `group` and `app_path` can be set
+name the odd ones out in `environments`. Any of `host`, `dir`, `slug`, `group`, `sudo` and `app_path` can be set
 per env; whatever an env leaves out falls back to the top-level value:
 
 ```php
@@ -100,7 +103,7 @@ per env; whatever an env leaves out falls back to the top-level value:
 Now `secrets:edit staging` goes to `necta-v2dev` and `secrets:edit production` to `necta`, with no flag to
 remember. Each setting resolves most specific first:
 
-1. the CLI option (`--host`, `--dir`, `--slug`, `--group`, `--path`),
+1. the CLI option (`--host`, `--dir`, `--slug`, `--group`, `--sudo`, `--path`),
 2. `environments.<env>.<setting>`,
 3. the top-level `<setting>`,
 4. the built-in default.
@@ -181,6 +184,7 @@ password manager (it is already on your clipboard).
 | `--dir`   | per-env, else `config('env-secrets.dir')`  | Directory on the box that holds the key files.      |
 | `--slug`  | per-env, else config, else app name        | Filename stem — key is `<slug>.<env>.key`.          |
 | `--group` | per-env, else `config('env-secrets.group')` | Unix group allowed to read the key — see below.     |
+| `--sudo`  | per-env, else `config('env-secrets.sudo')`, else `auto` | `auto`, `always` or `never` — see below. |
 | `--local` | off                                  | Encrypt locally only; skip installing on the box.   |
 
 ### Sharing a key with a team
@@ -206,6 +210,48 @@ install step**, and only a configured group survives it — a hand-applied `chgr
 owner-only the next time anyone rotates, locking the team out again with that same misleading error.
 
 Group membership applies to *new* logins; an open ssh session keeps the groups it started with.
+
+### Installing without sudo
+
+Only two install steps can ever need root: creating the key directory under a root-owned parent such
+as `/etc`, and handing the key to a group the ssh user is not in. Everything else is done as the ssh
+user. So by default (`sudo => 'auto'`) the install uses no sudo at all when the ssh user owns the key
+directory or can create it, for example a directory in their home on a Mac mini:
+
+```php
+'environments' => [
+    'production' => [
+        'host' => 'pc-mini',
+        'dir'  => '/Users/deploy/.config/env-secrets',
+    ],
+],
+```
+
+Only when it can't does the install use `sudo -n`. That fails straight away with
+`sudo: a password is required` rather than waiting on a prompt, because a non-interactive ssh can never
+answer one. The two other modes pin the choice:
+
+| `sudo` | Behaviour |
+|---|---|
+| `auto` *(default)* | No sudo when the ssh user owns (or can create) the dir and, with a group, is in it. `sudo -n` otherwise. |
+| `always` / `true` | Always create the dir and set the group with `sudo -n`. |
+| `never` / `false` | Never run sudo. Fails if the ssh user cannot create the dir. |
+
+A box whose key dir lives under `/etc` without passwordless sudo has two ways out. Create the directory
+once, owned by the ssh user (`sudo install -d -m 700 -o "$USER" /etc/myapp`), and `auto` needs no sudo
+from then on. Or give the ssh user passwordless sudo.
+
+**A failed install never loses the key.** The new key is written beside the old one and renamed over it
+only once it is complete, so a failure leaves the box's current key untouched. If the install fails,
+`secrets:provision` exits non-zero, puts the new key on your clipboard (the committed
+`.env.<env>.encrypted` is already encrypted with it), and prints the command to install it by hand:
+
+```
+pbpaste | ssh pc-mini 'umask 077; mkdir -p /Users/deploy/.config/env-secrets && chmod 700 … && cat > …/app.production.key && chmod 600 …'
+```
+
+Without a clipboard (not on macOS), the new key can't be kept. The command then puts
+`.env.<env>.encrypted` back the way it was, so nothing changes.
 
 ## Editing an env later
 
@@ -319,7 +365,10 @@ Values only ever appear masked, so this is safe to run in a script whose output 
   this command's own summary.
 - The key is streamed to the server over **ssh stdin** and to the clipboard over **pbcopy stdin** — never
   as a shell argument, so it stays out of `ps`, shell history, and CI logs.
-- On the box the key file is created `600`, owned by the connecting ssh user, in a `700` directory.
+- On the box the key file is created `600`, owned by the connecting ssh user, in a `700` directory. It is
+  written to a `.tmp` file beside the old key, locked down, then renamed over it, so a failed install
+  never truncates the key the box already has. sudo is used only where it is needed, and only as
+  `sudo -n`.
 - Every command prints the host and key path it resolved before touching the box, so a run aimed at the
   wrong box shows it on the first line.
 - `env`, `slug`, and `dir` are validated (`[a-z0-9-]` / absolute path) before any process runs.
