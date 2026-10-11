@@ -3,16 +3,17 @@
 return [
     /*
      * SSH host alias (from ~/.ssh/config) of the deploy box that stores the
-     * decryption key. Overridable per run with --host.
+     * decryption key. Required: set it here, per env in `environments`, or per
+     * run with --host. Commands refuse to run without one.
      */
-    'host' => env('ENV_SECRETS_HOST', 'necta'),
+    'host' => env('ENV_SECRETS_HOST'),
 
     /*
      * Absolute directory on the box that holds the key files. The command
      * creates it (700, owned by the ssh user) if it is missing. Overridable
      * per run with --dir.
      */
-    'dir' => env('ENV_SECRETS_DIR', '/etc/nectapharma'),
+    'dir' => env('ENV_SECRETS_DIR', '/etc/secrets'),
 
     /*
      * Filename stem — the key is written as <slug>.<env>.key. Leave null to
@@ -67,7 +68,7 @@ return [
      *   'environments' => [
      *       'staging' => ['host' => 'app-staging', 'app_path' => '/var/www/staging'],
      *       'production' => ['app_path' => '/var/www/production'],
-     *       'mini' => ['host' => 'pc-mini', 'dir' => '/Users/deploy/.config/env-secrets', 'sudo' => 'never'],
+     *       'mini' => ['host' => 'mac-mini', 'dir' => '/Users/deploy/.config/env-secrets', 'sudo' => 'never'],
      *   ],
      */
     'environments' => [],

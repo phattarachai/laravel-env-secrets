@@ -66,27 +66,40 @@ describe('resolution order', function () {
         sshRanTo('box-a', '/etc/shared/app.othertest.key');
     });
 
-    it('falls back to the built-in default when neither the map nor the top level sets a host', function () {
-        Process::fake(['*' => Process::result(exitCode: 1)]);
+    it('refuses to run when neither the option, the map nor the top level sets a host', function () {
+        Process::fake();
         config()->set('env-secrets.host', null);
 
-        $this->artisan('secrets:status', ['env' => 'othertest'])->assertFailed();
+        $this->artisan('secrets:status', ['env' => 'othertest'])
+            ->expectsOutputToContain('No deploy box for othertest')
+            ->assertFailed();
 
-        sshRanTo('necta', 'app.othertest.key');
+        Process::assertNothingRan();
+    });
+
+    it('encrypts locally without a host', function () {
+        Process::fake();
+        config()->set('env-secrets.host', null);
+        file_put_contents(base_path('.env.othertest'), "APP_NAME=test\n");
+
+        $this->artisan('secrets:provision', ['env' => 'othertest', '--local' => true])->assertSuccessful();
+
+        expect(base_path('.env.othertest.encrypted'))->toBeFile();
+        Process::assertDidntRun(fn (PendingProcess $process) => ($process->command[0] ?? null) === 'ssh');
     });
 
     it('overrides dir and slug per env, leaving the rest at the top level', function () {
         Process::fake(['*' => Process::result(exitCode: 1)]);
-        config()->set('env-secrets.environments.secretstest', ['dir' => '/etc/staging', 'slug' => 'backoffice']);
+        config()->set('env-secrets.environments.secretstest', ['dir' => '/etc/staging', 'slug' => 'myapp']);
 
         $this->artisan('secrets:status', ['env' => 'secretstest'])->assertFailed();
 
-        sshRanTo('box-a', '/etc/staging/backoffice.secretstest.key');
+        sshRanTo('box-a', '/etc/staging/myapp.secretstest.key');
     });
 
     it('lets an explicit --dir and --slug beat the per-env ones', function () {
         Process::fake(['*' => Process::result(exitCode: 1)]);
-        config()->set('env-secrets.environments.secretstest', ['dir' => '/etc/staging', 'slug' => 'backoffice']);
+        config()->set('env-secrets.environments.secretstest', ['dir' => '/etc/staging', 'slug' => 'myapp']);
 
         $this->artisan('secrets:status', ['env' => 'secretstest', '--dir' => '/etc/cli', '--slug' => 'cli'])->assertFailed();
 

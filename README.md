@@ -70,8 +70,8 @@ php artisan vendor:publish --tag=env-secrets-config
 ```php
 // config/env-secrets.php
 return [
-    'host'     => env('ENV_SECRETS_HOST', 'necta'),          // ssh host alias of the deploy box
-    'dir'      => env('ENV_SECRETS_DIR', '/etc/nectapharma'), // where key files live on the box
+    'host'     => env('ENV_SECRETS_HOST'),                    // required: ssh host alias of the deploy box
+    'dir'      => env('ENV_SECRETS_DIR', '/etc/secrets'),     // where key files live on the box
     'slug'     => env('ENV_SECRETS_SLUG', null),              // key filename stem; null → app name
     'group'    => env('ENV_SECRETS_GROUP', null),             // unix group that may read the key; null → owner only
     'sudo'     => env('ENV_SECRETS_SUDO', 'auto'),            // auto | always | never — how the install may use sudo
@@ -81,26 +81,29 @@ return [
 ];
 ```
 
+`host` has no default: set `ENV_SECRETS_HOST` (or `host` in the published config), or every command stops
+with `No deploy box for <env>` before it touches anything. Only `secrets:provision --local` runs without one.
+
 Every value is overridable per run with `--host`, `--dir`, `--slug`, `--group`, `--sudo`, `--path`. When an option is omitted
 the command uses the config value; when the config `slug` is `null` it derives one from `config('app.name')`
 (falling back to the application directory name).
 
 ### Envs that live on different boxes
 
-When your envs do not all share one box — say production and uat on `necta`, staging on `necta-v2dev` —
+When your envs do not all share one box — say production and uat on `prod-box`, staging on `staging-box` —
 name the odd ones out in `environments`. Any of `host`, `dir`, `slug`, `group`, `sudo` and `app_path` can be set
 per env; whatever an env leaves out falls back to the top-level value:
 
 ```php
-'host' => 'necta',
-'dir'  => '/etc/nectapharma',
+'host' => 'prod-box',
+'dir'  => '/etc/myapp',
 
 'environments' => [
-    'staging' => ['host' => 'necta-v2dev'],
+    'staging' => ['host' => 'staging-box'],
 ],
 ```
 
-Now `secrets:edit staging` goes to `necta-v2dev` and `secrets:edit production` to `necta`, with no flag to
+Now `secrets:edit staging` goes to `staging-box` and `secrets:edit production` to `prod-box`, with no flag to
 remember. Each setting resolves most specific first:
 
 1. the CLI option (`--host`, `--dir`, `--slug`, `--group`, `--sudo`, `--path`),
@@ -113,14 +116,14 @@ To make that obvious, every command opens by printing the box and file it resolv
 `secrets:show <env> <NAME>` value on stdout stays clean for scripts):
 
 ```
-Box  necta-v2dev:/etc/nectapharma/backoffice.staging.key
+Box  staging-box:/etc/myapp/myapp.staging.key
 ```
 
 and `secrets:status` prints the host and key path — and where each came from — before it reads anything:
 
 ```
-Host          necta-v2dev  (environments.staging)
-Key           /etc/nectapharma/backoffice.staging.key  (env-secrets.dir, env-secrets.slug)
+Host          staging-box  (environments.staging)
+Key           /etc/myapp/myapp.staging.key  (env-secrets.dir, env-secrets.slug)
 Readable      OK
 .encrypted    .env.staging.encrypted  OK
 Decrypts      OK
@@ -221,7 +224,7 @@ directory or can create it, for example a directory in their home on a Mac mini:
 ```php
 'environments' => [
     'production' => [
-        'host' => 'pc-mini',
+        'host' => 'mac-mini',
         'dir'  => '/Users/deploy/.config/env-secrets',
     ],
 ],
@@ -247,7 +250,7 @@ only once it is complete, so a failure leaves the box's current key untouched. I
 `.env.<env>.encrypted` is already encrypted with it), and prints the command to install it by hand:
 
 ```
-pbpaste | ssh pc-mini 'umask 077; mkdir -p /Users/deploy/.config/env-secrets && chmod 700 … && cat > …/app.production.key && chmod 600 …'
+pbpaste | ssh mac-mini 'umask 077; mkdir -p /Users/deploy/.config/env-secrets && chmod 700 … && cat > …/app.production.key && chmod 600 …'
 ```
 
 Without a clipboard (not on macOS), the new key can't be kept. The command then puts

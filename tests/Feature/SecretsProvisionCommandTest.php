@@ -16,7 +16,7 @@ it('encrypts the env file and installs the key over ssh without exposing it', fu
 
     $this->artisan('secrets:provision', [
         'env' => 'secretstest',
-        '--host' => 'necta-test',
+        '--host' => 'box-test',
         '--slug' => 'app',
     ])->assertSuccessful();
 
@@ -27,7 +27,7 @@ it('encrypts the env file and installs the key over ssh without exposing it', fu
         $command = (array) $process->command;
 
         return $command[0] === 'ssh'
-            && in_array('necta-test', $command, true)
+            && in_array('box-test', $command, true)
             && str_contains($command[2], 'app.secretstest.key')
             && preg_match('/^[0-9a-f]{32}$/', (string) $process->input) === 1
             && ! collect($command)->contains(fn (string $arg): bool => (bool) preg_match('/[0-9a-f]{32}/', $arg));
@@ -104,7 +104,7 @@ it('never prints the encryption key to the console', function () {
 
     $exitCode = Artisan::call('secrets:provision', [
         'env' => 'secretstest',
-        '--host' => 'necta-test',
+        '--host' => 'box-test',
         '--slug' => 'app',
     ]);
 
@@ -134,7 +134,7 @@ it('installs the key owner-only when no group is configured', function () {
 
     $this->artisan('secrets:provision', [
         'env' => 'secretstest',
-        '--host' => 'necta-test',
+        '--host' => 'box-test',
         '--slug' => 'app',
     ])->assertSuccessful();
 
@@ -153,7 +153,7 @@ it('installs the key group-readable when --group is passed', function () {
 
     $this->artisan('secrets:provision', [
         'env' => 'secretstest',
-        '--host' => 'necta-test',
+        '--host' => 'box-test',
         '--slug' => 'app',
         '--group' => 'rr-secrets',
     ])->assertSuccessful();
@@ -176,7 +176,7 @@ it('falls back to the configured group when --group is not passed', function () 
 
     $this->artisan('secrets:provision', [
         'env' => 'secretstest',
-        '--host' => 'necta-test',
+        '--host' => 'box-test',
         '--slug' => 'app',
     ])->assertSuccessful();
 
@@ -189,7 +189,7 @@ it('rejects a group name that is not a valid unix group', function () {
 
     $this->artisan('secrets:provision', [
         'env' => 'secretstest',
-        '--host' => 'necta-test',
+        '--host' => 'box-test',
         '--slug' => 'app',
         '--group' => 'bad group; rm -rf /',
     ])->assertFailed();
@@ -419,7 +419,7 @@ it('hands the key to the clipboard with a manual install command when the instal
     file_put_contents(base_path('.env.secretstest'), "APP_ENV=secretstest\n");
 
     $exitCode = Artisan::call('secrets:provision', [
-        'env' => 'secretstest', '--host' => 'pc-mini', '--dir' => '/Users/deploy/.config/env-secrets', '--slug' => 'app',
+        'env' => 'secretstest', '--host' => 'mac-mini', '--dir' => '/Users/deploy/.config/env-secrets', '--slug' => 'app',
     ]);
 
     $key = null;
@@ -431,7 +431,7 @@ it('hands the key to the clipboard with a manual install command when the instal
         // The ciphertext stays: it matches the key on the clipboard.
         ->and(file_exists(base_path('.env.secretstest.encrypted')))->toBeTrue()
         ->and(Artisan::output())
-        ->toContain("pbpaste | ssh pc-mini 'umask 077; mkdir -p /Users/deploy/.config/env-secrets && chmod 700 /Users/deploy/.config/env-secrets && cat > /Users/deploy/.config/env-secrets/app.secretstest.key && chmod 600 /Users/deploy/.config/env-secrets/app.secretstest.key'")
+        ->toContain("pbpaste | ssh mac-mini 'umask 077; mkdir -p /Users/deploy/.config/env-secrets && chmod 700 /Users/deploy/.config/env-secrets && cat > /Users/deploy/.config/env-secrets/app.secretstest.key && chmod 600 /Users/deploy/.config/env-secrets/app.secretstest.key'")
         ->not->toContain($key);
 });
 

@@ -58,11 +58,12 @@ abstract class SecretsCommand extends Command
     }
 
     /**
-     * The ssh host alias of the box that stores this env's key — see setting() for the order.
+     * The ssh host alias of the box that stores this env's key — see setting() for the order. There
+     * is no built-in default: an empty string means none is configured, which validEnv() refuses.
      */
     protected function resolveHost(): string
     {
-        return (string) ($this->setting('host') ?: 'necta');
+        return (string) $this->setting('host');
     }
 
     /**
@@ -164,17 +165,32 @@ abstract class SecretsCommand extends Command
     }
 
     /**
-     * env / slug must be [a-z0-9-]; dir must be an absolute path. Prints the reason and returns false.
+     * env / slug must be [a-z0-9-], dir must be an absolute path, and a host must be configured unless
+     * the run never reaches a box (`secrets:provision --local`). Prints the reason and returns false.
      */
     protected function validEnv(string $env): bool
     {
-        if ($this->isSlug($env) && $this->isSlug($this->resolveSlug()) && $this->isPath($this->resolveDir())) {
-            return true;
+        if (! $this->isSlug($env) || ! $this->isSlug($this->resolveSlug()) || ! $this->isPath($this->resolveDir())) {
+            $this->error('env and slug must be [a-z0-9-]; dir must be an absolute path.');
+
+            return false;
         }
 
-        $this->error('env and slug must be [a-z0-9-]; dir must be an absolute path.');
+        if ($this->resolveHost() === '' && ! $this->runsLocally()) {
+            $this->error("No deploy box for {$env}: set env-secrets.host (ENV_SECRETS_HOST), env-secrets.environments.{$env}.host, or pass --host.");
 
-        return false;
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Whether this run stays on this machine and so needs no box.
+     */
+    protected function runsLocally(): bool
+    {
+        return $this->hasOption('local') && (bool) $this->option('local');
     }
 
     /**

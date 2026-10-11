@@ -33,7 +33,7 @@ Nothing to do. The published config does not need the new key; it defaults to `a
 
 ### Added
 
-- Per-environment box settings: `'environments' => ['staging' => ['host' => 'necta-v2dev']]` in
+- Per-environment box settings: `'environments' => ['staging' => ['host' => 'staging-box']]` in
   `config/env-secrets.php`. Any of `host`, `dir`, `slug`, `group` and `app_path` can be set per env, and
   every command honours it. Resolution order: CLI option → `environments.<env>` → top-level key → default.
 - Every command opens by printing the box and key path it resolved (`Box  <host>:<path>`, on stderr), and

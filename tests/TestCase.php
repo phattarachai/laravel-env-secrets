@@ -11,4 +11,13 @@ abstract class TestCase extends BaseTestCase
     {
         return [EnvSecretsServiceProvider::class];
     }
+
+    /**
+     * The package has no default box, so every test starts with one; tests about a missing host
+     * unset it.
+     */
+    protected function defineEnvironment($app): void
+    {
+        $app['config']->set('env-secrets.host', 'box-test');
+    }
 }
