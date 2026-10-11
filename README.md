@@ -4,7 +4,7 @@
 [![Tests](https://img.shields.io/github/actions/workflow/status/phattarachai/laravel-env-secrets/run-tests.yml?branch=main&label=tests&style=flat-square)](https://github.com/phattarachai/laravel-env-secrets/actions/workflows/run-tests.yml?query=branch%3Amain)
 [![Code Style](https://img.shields.io/github/actions/workflow/status/phattarachai/laravel-env-secrets/fix-php-code-style-issues.yml?branch=main&label=code%20style&style=flat-square)](https://github.com/phattarachai/laravel-env-secrets/actions/workflows/fix-php-code-style-issues.yml?query=branch%3Amain)
 [![PHP Version](https://img.shields.io/packagist/dependency-v/phattarachai/laravel-env-secrets/php?style=flat-square&label=php&logo=php&logoColor=white)](https://packagist.org/packages/phattarachai/laravel-env-secrets)
-![Laravel Version](https://img.shields.io/badge/laravel-11%20%7C%2012%20%7C%2013-FF2D20?style=flat-square&logo=laravel&logoColor=white)
+![Laravel Version](https://img.shields.io/badge/laravel-12%20%7C%2013-FF2D20?style=flat-square&logo=laravel&logoColor=white)
 [![Total Downloads](https://img.shields.io/packagist/dt/phattarachai/laravel-env-secrets.svg?style=flat-square)](https://packagist.org/packages/phattarachai/laravel-env-secrets)
 
 A small suite of artisan commands to run the encrypted-`.env` deploy pattern end to end: mint an
@@ -379,10 +379,15 @@ Values only ever appear masked, so this is safe to run in a script whose output 
 composer test
 ```
 
-## Credits
-
-- [Phattarachai](https://github.com/phatchai)
-
 ## License
 
 The MIT License (MIT). See [LICENSE.md](LICENSE.md).
+
+## ผู้พัฒนา
+
+พัฒนาและดูแลโดย [บริษัท ภัทรชัย อาร์ทิซาน จำกัด](https://phattarachai.dev) (Phattarachai Artisan)
+บริษัทที่ปรึกษาและพัฒนาเว็บ ที่เรียนรู้และแบ่งปันกับชุมชน Laravel
+แพ็กเกจนี้แบ่งปันให้ชุมชนนำไปใช้และต่อยอดได้อย่างอิสระ
+
+ดูแพ็กเกจอื่นของเราได้ที่ [phattarachai.dev/open-source](https://phattarachai.dev/open-source)
+และติดต่อเราได้ที่ [phattarachai.dev](https://phattarachai.dev/#contact)
