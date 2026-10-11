@@ -14,7 +14,7 @@ it('fetches the key from the box and decrypts the env for editing', function () 
     Process::fake(['*' => Process::result(output: $key."\n")]);
     seedEncrypted('secretstest', $key, "APP_ENV=secretstest\nFOO=bar\n");
 
-    $this->artisan('secrets:edit', ['env' => 'secretstest', '--host' => 'necta-test'])
+    $this->artisan('secrets:edit', ['env' => 'secretstest', '--host' => 'box-test'])
         ->assertSuccessful();
 
     expect(file_get_contents(base_path('.env.secretstest')))->toBe("APP_ENV=secretstest\nFOO=bar\n");

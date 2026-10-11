@@ -63,10 +63,10 @@ to overrides of `host`, `dir`, `slug`, `group`, `sudo` and `app_path`; anything 
 top-level key:
 
 ```php
-'host' => 'necta',
-'dir'  => '/etc/nectapharma',
+'host' => 'prod-box',
+'dir'  => '/etc/myapp',
 'environments' => [
-    'staging' => ['host' => 'necta-v2dev'],   // production + uat stay on necta
+    'staging' => ['host' => 'staging-box'],   // production + uat stay on prod-box
 ],
 ```
 

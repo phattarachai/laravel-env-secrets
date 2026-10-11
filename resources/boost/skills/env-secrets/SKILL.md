@@ -92,7 +92,7 @@ php artisan secrets:status production --remote          # the live .env is prese
 
 ```php
 'environments' => [
-    'staging' => ['host' => 'necta-v2dev'],
+    'staging' => ['host' => 'staging-box'],
 ],
 ```
 
