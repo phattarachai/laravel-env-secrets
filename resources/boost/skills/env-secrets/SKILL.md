@@ -1,7 +1,7 @@
 ---
 name: env-secrets
-description: 'Use this skill whenever you need to read or change an encrypted environment file (`.env.<env>.encrypted`) in a project using `phattarachai/laravel-env-secrets` — production, uat, or any non-local env. It is the ONLY correct way to touch these files: NEVER run `php artisan env:encrypt` by hand, because that command reads the key only from `--key` (it ignores `LARAVEL_ENV_ENCRYPTION_KEY`) and, run non-interactively, silently mints a throwaway random key — producing ciphertext the deploy box can no longer decrypt. This package''s `secrets:*` commands fetch the real key from the deploy box over ssh and always pass it through, so the key can never drift and never lands in argv, shell history, or a CI log. Covers editing an env (`secrets:edit` → `secrets:reencrypt`), first-time setup (`secrets:provision`), health-checking (`secrets:status`), and peeking at values without decrypting to disk (`secrets:show`), plus the `--remote` mode that reads the live deployed `.env`, and the per-env `environments` map for projects whose envs live on different boxes. Triggers on: "edit the production env", "add a key to .env.production", "re-encrypt the env", ".env.production.encrypted", "env:encrypt", "MAC is invalid", "decryption failed after deploy", "what is DB_PASSWORD on production", "rotate an env value", "staging is on a different box", "--host", or any request to change committed encrypted env files.'
-version: 2026.09.30.1
+description: 'Use this skill whenever you need to read or change an encrypted environment file (`.env.<env>.encrypted`) in a project using `phattarachai/laravel-env-secrets` — production, uat, or any non-local env. It is the ONLY correct way to touch these files: NEVER run `php artisan env:encrypt` by hand, because that command reads the key only from `--key` (it ignores `LARAVEL_ENV_ENCRYPTION_KEY`) and, run non-interactively, silently mints a throwaway random key — producing ciphertext the deploy box can no longer decrypt. This package''s `secrets:*` commands fetch the real key from the deploy box over ssh and always pass it through, so the key can never drift and never lands in argv, shell history, or a CI log. Covers editing an env (`secrets:edit` → `secrets:reencrypt`), first-time setup (`secrets:provision`), health-checking (`secrets:status`), and peeking at values without decrypting to disk (`secrets:show`), plus the `--remote` mode that reads the live deployed `.env`, and the per-env `environments` map for projects whose envs live on different boxes. Triggers on: "edit the production env", "add a key to .env.production", "re-encrypt the env", ".env.production.encrypted", "env:encrypt", "MAC is invalid", "decryption failed after deploy", "what is DB_PASSWORD on production", "rotate an env value", "staging is on a different box", "--host", "sudo: a terminal is required to read the password", "secrets:provision failed to install key", or any request to change committed encrypted env files.'
+version: 2026.09.30.2
 ---
 
 # Env Secrets
@@ -46,6 +46,13 @@ Run it from the machine holding the plaintext `.env.production`. It prints nothi
 clipboard key into your password manager and commit `.env.production.encrypted`. Use `--local` to encrypt
 without installing the key on a server.
 
+If the install step fails, e.g. `sudo: a password is required`, **do not re-run provision straight away.**
+The committed `.env.<env>.encrypted` is already encrypted with the new key, and that key is on the
+clipboard. Save it to the password manager and install it with the `pbpaste | ssh …` command the output
+prints. Then fix the cause for next time: set `sudo => 'never'` for that env, or pre-create the key dir
+owned by the ssh user. Re-running provision mints a different key, which also works but throws this one
+away.
+
 ## Inspecting without decrypting to disk
 
 ```bash
@@ -77,6 +84,9 @@ php artisan secrets:status production --remote          # the live .env is prese
 - `dir` (`--dir`) — directory on the box holding key files.
 - `slug` (`--slug`) — filename stem; the key is `<slug>.<env>.key`. Defaults to the app-name slug.
 - `group` (`--group`) — unix group that may read the key; null keeps it owner-only.
+- `sudo` (`--sudo`) — how `secrets:provision` may use sudo. `auto` (the default) uses none when the ssh
+  user owns or can create the key dir, which covers a dir under their home on a Mac with no passwordless
+  sudo; otherwise it uses `sudo -n`. `always` / `true` and `never` / `false` pin the choice.
 - `app_path` (`--path`) — deployed app directory, for `--remote` reads.
 - `environments` — per-env overrides of any of the above, for envs on a different box:
 

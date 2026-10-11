@@ -37,7 +37,8 @@ asserts it matches the plaintext before you commit. The key cannot drift.
   shell history, and CI logs. Tests assert this (`Process::assertRan` checks the key is not in any argv;
   a dedicated test asserts it is absent from command output).
 - `secrets:provision` streams a freshly minted key to the box over ssh **stdin** and to the clipboard over
-  `pbcopy` **stdin** — again never an argument.
+  `pbcopy` **stdin** — again never an argument. It writes a `.tmp` beside the old key and renames it
+  over, so a failed install never truncates the box's current key.
 - `secrets:show` decrypts in memory and masks values unless one is explicitly named. `--remote` reads the
   already-plaintext live `.env` on the box; no key is involved.
 
@@ -52,13 +53,13 @@ asserts it matches the plaintext before you commit. The key cannot drift.
 | `secrets:show <env> [name]` | box (local) / none (`--remote`) | no | inspect names / one value |
 | `secrets:merge <env>` | box | appends to the local `.env` | top up missing keys |
 
-Shared options: `--host`, `--dir`, `--slug` (all commands); `--group` (`provision`); `--path`
+Shared options: `--host`, `--dir`, `--slug` (all commands); `--group`, `--sudo` (`provision`); `--path`
 (`status`/`show`, for `--remote`).
 
 ## Which box: per-env settings
 
 One project can keep its envs on different boxes. `config('env-secrets.environments')` maps an env name
-to overrides of `host`, `dir`, `slug`, `group` and `app_path`; anything an env leaves out falls back to the
+to overrides of `host`, `dir`, `slug`, `group`, `sudo` and `app_path`; anything an env leaves out falls back to the
 top-level key:
 
 ```php
