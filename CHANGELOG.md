@@ -7,7 +7,7 @@ Release notes are drafted automatically from merged pull requests and published 
 
 This file records anything released before that automation landed, plus upgrade notes for releases that need them.
 
-## Unreleased
+## v1.5.0 — 2026-10-11
 
 ### Fixed
 
