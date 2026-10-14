@@ -108,30 +108,6 @@ class SecretsProvisionCommand extends SecretsCommand
     }
 
     /**
-     * How the install step may use sudo — see setting() for the order; the config value may also be
-     * a plain boolean (true = always, false = never), which is why it is not read through setting():
-     * that treats `false` as "unset" and would fall through to the top-level key.
-     *
-     *   auto   — no sudo when the ssh user owns (or can create) the key dir, else `sudo -n`,
-     *   always — `sudo -n` for the dir and the group change (a box whose key dir is root's),
-     *   never  — plain commands only (a key dir inside the ssh user's home, e.g. a Mac).
-     *
-     * Returns null for anything else.
-     */
-    private function resolveSudo(): ?string
-    {
-        $value = $this->option('sudo');
-        $value = $value !== null && $value !== '' ? $value : ($this->environmentSetting('sudo') ?? config('env-secrets.sudo'));
-
-        return match ($value) {
-            null, '', 'auto' => 'auto',
-            true, 'always' => 'always',
-            false, 'never' => 'never',
-            default => null,
-        };
-    }
-
-    /**
      * Write the key to <path> on the server: create the dir, stream the key in over ssh stdin to a
      * temp file beside it, lock that down, then rename it over the old key.
      *
@@ -169,7 +145,8 @@ class SecretsProvisionCommand extends SecretsCommand
      * dir the user now owns, the chmods, the rename — is plain. So "auto" takes the plain route
      * whenever the user owns the dir (or can create it) and, with a group, is a member of it; only
      * otherwise does it reach for `sudo -n`, which fails fast instead of waiting on a password
-     * prompt that a non-interactive ssh can never answer.
+     * prompt that a non-interactive ssh can never answer. `never` (a key dir inside the ssh user's
+     * home, e.g. a Mac) keeps to the plain route and `always` (a key dir that is root's) to sudo.
      */
     private function installScript(string $path, ?string $group, string $sudo): string
     {

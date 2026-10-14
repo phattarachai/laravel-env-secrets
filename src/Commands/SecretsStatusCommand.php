@@ -19,6 +19,7 @@ class SecretsStatusCommand extends SecretsCommand
         {--dir= : Directory on the box holding the key files (default: config env-secrets.environments.<env>.dir, else env-secrets.dir)}
         {--slug= : Filename stem — <slug>.<env>.key (default: config env-secrets.environments.<env>.slug, else env-secrets.slug, else the app name)}
         {--path= : Deployed app directory on the box for --remote (default: config env-secrets.environments.<env>.app_path, else env-secrets.app_path)}
+        {--sudo= : How --remote may use sudo to read the live .env: auto (only if a plain cat is refused), always, or never (default: config env-secrets.environments.<env>.sudo, else env-secrets.sudo, else auto)}
         {--remote : Check the live deployed .env on the server instead of the committed .encrypted}';
 
     protected $description = 'Report whether .env.<env> is provisioned and decryptable — locally, or the live .env with --remote.';

@@ -7,6 +7,26 @@ Release notes are drafted automatically from merged pull requests and published 
 
 This file records anything released before that automation landed, plus upgrade notes for releases that need them.
 
+## v1.6.0 — 2026-10-14
+
+### Changed
+
+- `secrets:status --remote` and `secrets:show --remote` follow the `sudo` setting. Before, they always
+  ran `ssh <host> sudo -n cat <app_path>/.env`, so on a box where the ssh user owns the app directory and
+  has no passwordless sudo (a Mac mini) they failed with `sudo: a password is required`, though a plain
+  `cat` would have worked. Now `auto` (the default) tries a plain `cat` first and uses `sudo -n cat` only
+  when that is refused with `Permission denied`. `never` uses a plain `cat` only, and `always` keeps the
+  old `sudo -n cat`.
+
+### Added
+
+- `--sudo` option on `secrets:status` and `secrets:show`.
+
+### Upgrading
+
+Nothing to do. A box that needed `sudo -n cat` still gets it under `auto`, one plain `cat` later. To skip
+that first attempt, set `sudo` to `always` for that env.
+
 ## v1.5.0 — 2026-10-11
 
 ### Fixed
