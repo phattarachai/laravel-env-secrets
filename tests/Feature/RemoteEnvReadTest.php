@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Process\FakeProcessResult;
+use Illuminate\Process\PendingProcess;
 use Illuminate\Support\Facades\Process;
 
 /*
@@ -13,11 +14,21 @@ beforeEach(function () {
 });
 
 /**
- * Assert the box saw exactly these remote commands, in this order, and nothing else.
+ * Assert the box saw exactly these remote commands, in this order, and nothing else. The recorded
+ * processes are walked with assertDidntRun() and a callback that never matches, so every one is
+ * visited (assertRanInOrder() is Laravel 13 only).
  */
 function assertReadWith(string ...$commands): void
 {
-    Process::assertRanInOrder(array_map(fn (string $command) => ['ssh', 'box-test', $command], $commands));
+    $ran = [];
+
+    Process::assertDidntRun(function (PendingProcess $process) use (&$ran): bool {
+        $ran[] = $process->command;
+
+        return false;
+    });
+
+    expect($ran)->toBe(array_map(fn (string $command) => ['ssh', 'box-test', $command], $commands));
 }
 
 function denied(): FakeProcessResult
