@@ -257,9 +257,16 @@ abstract class SecretsCommand extends Command
     }
 
     /**
-     * Read the live, deployed .env on the server over ssh. The deploy writes it as the web user, so
-     * the reachable path is `sudo -n cat`. Returns null (with a reason) when app_path is unset or the
-     * read fails.
+     * Read the live, deployed .env on the server over ssh, using sudo as resolveSudo() allows:
+     *
+     *   auto   — a plain `cat` first; `sudo -n cat` only when that is refused with a permission error
+     *            (the deploy wrote the file as a web user the ssh user cannot read). A box where the
+     *            ssh user owns the app dir and has no passwordless sudo — a Mac mini — never needs it.
+     *   always — `sudo -n cat` straight away.
+     *   never  — a plain `cat` only.
+     *
+     * The plain read runs under LC_ALL=C so "Permission denied" is recognisable whatever the box's
+     * locale. Returns null (with a reason) when app_path or the sudo mode is unusable, or the read fails.
      */
     protected function readRemoteEnv(): ?string
     {
@@ -271,18 +278,58 @@ abstract class SecretsCommand extends Command
             return null;
         }
 
+        $sudo = $this->resolveSudo();
+
+        if ($sudo === null) {
+            $this->error('sudo must be auto, always or never (or true / false in config).');
+
+            return null;
+        }
+
         $host = $this->resolveHost();
         $file = "{$appPath}/.env";
+        $plain = sprintf('LC_ALL=C cat %s', escapeshellarg($file));
+        $elevated = sprintf('sudo -n cat %s', escapeshellarg($file));
 
-        $result = Process::run(['ssh', $host, sprintf('sudo -n cat %s', escapeshellarg($file))]);
+        $result = Process::run(['ssh', $host, $sudo === 'always' ? $elevated : $plain]);
+
+        if ($sudo === 'auto' && ! $result->successful() && str_contains($result->errorOutput(), 'Permission denied')) {
+            $result = Process::run(['ssh', $host, $elevated]);
+        }
 
         if (! $result->successful()) {
             $this->error("Could not read {$host}:{$file}: ".trim($result->errorOutput()));
+
+            if (str_contains($result->errorOutput(), 'sudo')) {
+                $this->line("  The ssh user cannot read it and sudo wants a password. Give that user read access to the .env, or passwordless sudo on {$host}.");
+            }
 
             return null;
         }
 
         return $result->output();
+    }
+
+    /**
+     * How a command may use sudo on the box — see setting() for the order, the option being --sudo;
+     * the config value may also be a plain boolean (true = always, false = never), which is why it is
+     * not read through setting(): that treats `false` as "unset" and would fall through to the
+     * top-level key. Returns 'auto', 'always' or 'never', or null for anything else.
+     *
+     * sudo always runs as `sudo -n`: over a non-interactive ssh a password prompt can never be
+     * answered, so it fails fast instead.
+     */
+    protected function resolveSudo(): ?string
+    {
+        $value = $this->hasOption('sudo') ? $this->option('sudo') : null;
+        $value = $value !== null && $value !== '' ? $value : ($this->environmentSetting('sudo') ?? config('env-secrets.sudo'));
+
+        return match ($value) {
+            null, '', 'auto' => 'auto',
+            true, 'always' => 'always',
+            false, 'never' => 'never',
+            default => null,
+        };
     }
 
     /**

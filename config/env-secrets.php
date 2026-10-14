@@ -33,13 +33,15 @@ return [
     'group' => env('ENV_SECRETS_GROUP', null),
 
     /*
-     * How `secrets:provision` may use sudo when it installs the key:
+     * How the commands may use sudo on the box — when `secrets:provision` installs the key, and when
+     * `secrets:status --remote` / `secrets:show --remote` read the live .env:
      *
-     *   'auto'   — only when it has to: the key dir is created and written as the ssh user whenever
+     *   'auto'   — only when it has to. The key dir is created and written as the ssh user whenever
      *              that user owns it or can create it (a dir under their home), and `sudo -n` is
      *              reached for only when it cannot (a dir under /etc) or for a group the user is
-     *              not in. The default.
-     *   'always' — `sudo -n` for the dir and the group change. (true works too.)
+     *              not in. The live .env is read with a plain `cat`, and with `sudo -n cat` only
+     *              when that is refused with "Permission denied". The default.
+     *   'always' — `sudo -n` for the dir, the group change and the .env read. (true works too.)
      *   'never'  — no sudo at all, e.g. a Mac mini with no passwordless sudo. (false works too.)
      *
      * sudo always runs as `sudo -n`: over a non-interactive ssh a password prompt can never be

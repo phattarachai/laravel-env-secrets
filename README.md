@@ -74,7 +74,7 @@ return [
     'dir'      => env('ENV_SECRETS_DIR', '/etc/secrets'),     // where key files live on the box
     'slug'     => env('ENV_SECRETS_SLUG', null),              // key filename stem; null → app name
     'group'    => env('ENV_SECRETS_GROUP', null),             // unix group that may read the key; null → owner only
-    'sudo'     => env('ENV_SECRETS_SUDO', 'auto'),            // auto | always | never — how the install may use sudo
+    'sudo'     => env('ENV_SECRETS_SUDO', 'auto'),            // auto | always | never — when the box may use sudo
     'app_path' => env('ENV_SECRETS_APP_PATH', null),          // deployed app dir on the box, for --remote
 
     'environments' => [],                                     // per-env overrides — see below
@@ -292,6 +292,19 @@ ciphertext — the source of truth for what the app is actually running. Set `ap
 php artisan secrets:show production DB_HOST --remote
 php artisan secrets:status production --remote
 ```
+
+The read follows the same [`sudo` setting](#installing-without-sudo) as the install, overridable per run
+with `--sudo`:
+
+| `sudo` | How `--remote` reads `<app_path>/.env` |
+|---|---|
+| `auto` *(default)* | A plain `ssh <host> cat`. Only if that fails with `Permission denied` (the deploy wrote the file as a web user the ssh user can't read) does it retry with `sudo -n cat`. |
+| `always` / `true` | `sudo -n cat` straight away. |
+| `never` / `false` | A plain `cat` only. |
+
+So a box where the ssh user owns the app directory and has no passwordless sudo, such as a Mac mini,
+works under `auto` with no setting at all. A Linux box whose `.env` belongs to `www-data` still gets the
+`sudo -n` it needs.
 
 ## Topping up a teammate's `.env`
 
